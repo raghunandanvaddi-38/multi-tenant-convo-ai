@@ -35,6 +35,9 @@ from app.api.chat_routes import router as chat_router
 from app.analytics.routes import router as analytics_router
 from app.middleware.rate_limit import APIKeyRateLimitMiddleware
 from app.middleware.request_id import RequestIDMiddleware
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from starlette.requests import Request as _StarletteRequest
 from app.core.tts import synthesize_chunks, get_engine_name, get_tts_provider, get_default_tts_voice
 from app.core.stt import get_model
 from app.core.agent import ensure_system_initialized
@@ -177,4 +180,17 @@ app.include_router(analytics_router)
 # Middleware (order matters — request-id first so it wraps everything else)
 app.add_middleware(APIKeyRateLimitMiddleware)
 app.add_middleware(RequestIDMiddleware)
+
+
+# Log the reason for 422s. Without this, uvicorn only prints the status code
+# and you can't tell whether a signup rejection was the email, the password
+# length, or a missing content-type.
+@app.exception_handler(RequestValidationError)
+async def _log_validation_error(request: _StarletteRequest, exc: RequestValidationError):
+    reasons = []
+    for err in exc.errors():
+        loc = ".".join(str(p) for p in err.get("loc", []) if p not in ("body",))
+        reasons.append(f"{loc}: {err.get('msg')}")
+    log.warning(f"[422] {request.method} {request.url.path} — {'; '.join(reasons)}")
+    return JSONResponse({"detail": exc.errors()}, status_code=422)
 

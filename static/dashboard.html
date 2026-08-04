@@ -145,6 +145,20 @@ const hide = id => $(id).classList.add('hidden');
 function toast(msg, kind='') { const el=$('toast'); el.className='toast '+kind; el.textContent=msg; el.style.display='block';
   clearTimeout(toast._t); toast._t=setTimeout(()=>el.style.display='none', 3500); }
 
+function _errorMessage(data, res) {
+  if (!data) return res.statusText;
+  if (typeof data.error === 'string') return data.error;
+  // FastAPI 422 shape: { detail: [{ loc: [...], msg: "...", type: "..." }, ...] }
+  if (Array.isArray(data.detail)) {
+    return data.detail.map(d => {
+      const field = Array.isArray(d.loc) ? d.loc.filter(x => x !== 'body').join('.') : '';
+      return field ? `${field}: ${d.msg}` : d.msg;
+    }).join('; ');
+  }
+  if (typeof data.detail === 'string') return data.detail;
+  return res.statusText;
+}
+
 async function api(method, path, body) {
   const headers = {'content-type':'application/json'};
   const t = tok();
@@ -158,7 +172,7 @@ async function api(method, path, body) {
   }
   const txt = await res.text();
   let data = null; try { data = txt? JSON.parse(txt): null; } catch { data = {error: txt}; }
-  if (!res.ok) throw new Error((data && data.error) || data?.detail || res.statusText);
+  if (!res.ok) throw new Error(_errorMessage(data, res));
   return data;
 }
 
@@ -186,13 +200,33 @@ $('authSubmit').onclick = async () => {
   const email = $('authEmail').value.trim();
   const password = $('authPassword').value;
   const display_name = $('authName').value.trim();
+
+  // Client-side guards so we don't get a mystery 422
+  if (!email.includes('@') || !email.includes('.')) {
+    $('authError').textContent = 'Enter a valid email address';
+    return;
+  }
+  if (authMode === 'signup' && password.length < 8) {
+    $('authError').textContent = 'Password must be at least 8 characters';
+    return;
+  }
+
   const path = authMode === 'login' ? '/auth/login' : '/auth/signup';
+  $('authSubmit').disabled = true;
   try {
     const d = await api('POST', path, authMode==='login'? {email, password}: {email, password, display_name});
     saveTok(d.access_token, d.refresh_token);
     await bootApp();
-  } catch (e) { $('authError').textContent = e.message; }
+  } catch (e) {
+    $('authError').textContent = e.message;
+  } finally {
+    $('authSubmit').disabled = false;
+  }
 };
+
+// Hint the password field's minimum on signup
+$('authPassword').setAttribute('minlength', '8');
+$('authEmail').setAttribute('autocomplete', 'email');
 
 async function bootApp() {
   hide('authShell'); show('app');
