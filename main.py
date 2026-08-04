@@ -32,6 +32,7 @@ from app.auth.routes import router as auth_router
 from app.documents.routes import router as documents_router
 from app.workspaces.routes import router as workspaces_router
 from app.api.chat_routes import router as chat_router
+from app.api.voice_routes import router as voice_router
 from app.analytics.routes import router as analytics_router
 from app.middleware.rate_limit import APIKeyRateLimitMiddleware
 from app.middleware.request_id import RequestIDMiddleware
@@ -175,6 +176,7 @@ app.include_router(auth_router)
 app.include_router(documents_router)
 app.include_router(workspaces_router)
 app.include_router(chat_router)
+app.include_router(voice_router)
 app.include_router(analytics_router)
 
 # Middleware (order matters — request-id first so it wraps everything else)

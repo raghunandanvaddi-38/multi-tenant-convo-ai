@@ -30,6 +30,7 @@
     const apiKey = opts.apiKey;
     const baseUrl = (opts.baseUrl || "").replace(/\/+$/, "") || guessBase();
     const userId = opts.userId || "";
+    const voiceEnabled = opts.voice !== false;   // default: show mic button
     if (!apiKey || !apiKey.startsWith("sk_")) {
       console.error("[Platform] init: missing/invalid apiKey");
       return;
@@ -51,6 +52,7 @@
       apiKey,
       baseUrl,
       userId,
+      voiceEnabled,
       botName: brand.bot_name || "Assistant",
       color: brand.primary_color || "#6aa5ff",
       welcome: brand.welcome_message || "Hi! How can I help?",
@@ -89,6 +91,7 @@
     const input = $(".input");
     const sendBtn = $(".send");
     const closeBtn = $(".close");
+    const micBtn = $(".mic");
 
     let conversationId = sessionStorage.getItem("platform_conv") || null;
     let open = false;
@@ -97,6 +100,136 @@
     closeBtn.addEventListener("click", () => toggle(false));
     sendBtn.addEventListener("click", send);
     input.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+    if (micBtn) micBtn.addEventListener("click", toggleVoice);
+
+    // ---- voice (streaming, raw PCM in + raw PCM out) ----
+    // Server declares sample rates in `session_start.audio`. We capture at 16 kHz,
+    // play back at whatever rate the server told us (24 kHz for Kokoro).
+    let voiceState = "off";                          // off | connecting | live
+    let voiceSock = null;
+    let micStream = null;
+    let audioIn = null, audioNode = null, audioSource = null;
+    let audioOut = null, audioPlayhead = 0;
+    let outRate = 24000;                             // updated from session_start
+    let inRate  = 16000;
+    let assistantBub = null;                         // live text bubble while streaming
+    let partialBub = null;                           // live user bubble while speaking
+
+    async function toggleVoice() {
+      if (voiceState !== "off") { stopVoice(); return; }
+      try {
+        voiceState = "connecting";
+        micBtn.classList.add("live");
+
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: { channelCount: 1, sampleRate: inRate, echoCancellation: true, noiseSuppression: true },
+        });
+        audioIn = new AudioContext({ sampleRate: inRate });
+        audioOut = new AudioContext();               // real rate set on session_start
+        audioPlayhead = 0;
+        audioSource = audioIn.createMediaStreamSource(micStream);
+        // 512-sample buffer ≈ 32 ms — small enough that VAD reacts within a frame.
+        audioNode = audioIn.createScriptProcessor(512, 1, 1);
+
+        const url = new URL(cfg.baseUrl.replace(/^http/, "ws") + "/v1/ws/voice");
+        url.searchParams.set("api_key", cfg.apiKey);
+        if (cfg.userId) url.searchParams.set("user_id", cfg.userId);
+
+        voiceSock = new WebSocket(url.toString());
+        voiceSock.binaryType = "arraybuffer";
+
+        voiceSock.onopen = () => { voiceState = "live"; };
+        voiceSock.onclose = () => stopVoice();
+
+        voiceSock.onmessage = (ev) => {
+          if (typeof ev.data !== "string") {
+            // Raw int16 PCM at outRate — schedule directly, no decode step
+            playPCM(ev.data);
+            return;
+          }
+          let m = null; try { m = JSON.parse(ev.data); } catch { return; }
+          if (m.type === "session_start") {
+            const rate = m.audio && m.audio.output && m.audio.output.sample_rate;
+            if (rate && rate !== outRate) {
+              outRate = rate;
+              try { audioOut.close(); } catch {}
+              audioOut = new AudioContext({ sampleRate: rate });
+              audioPlayhead = 0;
+            }
+          } else if (m.type === "partial_transcript") {
+            if (!partialBub) partialBub = addMsg("u", m.text);
+            else partialBub.textContent = m.text;
+            log.scrollTop = 1e9;
+          } else if (m.type === "transcript") {
+            if (partialBub) partialBub.textContent = m.text;
+            else addMsg("u", m.text);
+            partialBub = null;
+            assistantBub = null;
+          } else if (m.type === "token") {
+            if (!assistantBub) assistantBub = addMsg("a", m.text);
+            else { assistantBub.textContent += m.text; log.scrollTop = 1e9; }
+          } else if (m.type === "done") {
+            assistantBub = null;
+          } else if (m.type === "error") {
+            addMsg("a", "(error: " + m.text + ")");
+            assistantBub = null; partialBub = null;
+          }
+        };
+
+        audioNode.onaudioprocess = (e) => {
+          if (!voiceSock || voiceSock.readyState !== 1) return;
+          const f32 = e.inputBuffer.getChannelData(0);
+          const i16 = new Int16Array(f32.length);
+          for (let i = 0; i < f32.length; i++) {
+            const s = Math.max(-1, Math.min(1, f32[i]));
+            i16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+          }
+          voiceSock.send(i16.buffer);
+        };
+
+        audioSource.connect(audioNode);
+        audioNode.connect(audioIn.destination);
+      } catch (e) {
+        console.error("[Platform] voice failed:", e);
+        addMsg("a", "Mic access denied or unavailable: " + e.message);
+        stopVoice();
+      }
+    }
+
+    /**
+     * Play a raw int16 PCM binary chunk (little-endian) at outRate.
+     * We convert to float32, wrap in an AudioBuffer, and schedule it back-to-back
+     * against a running `audioPlayhead` so chunks concatenate without gaps.
+     */
+    function playPCM(arrayBuffer) {
+      if (!arrayBuffer || arrayBuffer.byteLength < 2) return;
+      const i16 = new Int16Array(arrayBuffer);
+      const f32 = new Float32Array(i16.length);
+      for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
+      const buffer = audioOut.createBuffer(1, f32.length, outRate);
+      buffer.getChannelData(0).set(f32);
+      const src = audioOut.createBufferSource();
+      src.buffer = buffer;
+      src.connect(audioOut.destination);
+      const now = audioOut.currentTime;
+      const t = Math.max(now, audioPlayhead || now);
+      src.start(t);
+      audioPlayhead = t + buffer.duration;
+    }
+
+    function stopVoice() {
+      voiceState = "off";
+      if (micBtn) micBtn.classList.remove("live");
+      partialBub = null; assistantBub = null;
+      try { audioNode && audioNode.disconnect(); } catch {}
+      try { audioSource && audioSource.disconnect(); } catch {}
+      try { micStream && micStream.getTracks().forEach(t => t.stop()); } catch {}
+      try { audioIn && audioIn.close(); } catch {}
+      try { audioOut && audioOut.close(); } catch {}
+      try { voiceSock && voiceSock.close(); } catch {}
+      micStream = null; audioIn = null; audioOut = null;
+      audioNode = null; audioSource = null; voiceSock = null;
+    }
 
     if (!sessionStorage.getItem("platform_greeted")) {
       addMsg("a", cfg.welcome);
@@ -189,6 +322,13 @@
         </div>
         <div class="log"></div>
         <div class="row">
+          ${cfg.voiceEnabled ? `<button class="mic" aria-label="Talk" title="Push to talk (toggles)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 1a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v1a7 7 0 0 1-14 0v-1"/><line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+          </button>` : ``}
           <textarea class="input" rows="1" placeholder="Type a message..."></textarea>
           <button class="send" aria-label="Send">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -278,12 +418,19 @@
         border: 1px solid var(--p-border); background: var(--p-bg); color: var(--p-fg);
         font: inherit; max-height: 100px;
       }
-      .send {
+      .send, .mic {
         border: none; background: var(--p-color); color: #fff;
         border-radius: 8px; padding: 0 12px; cursor: pointer;
         display: flex; align-items: center;
       }
-      .send:hover { filter: brightness(1.05); }
+      .mic {
+        background: transparent; color: var(--p-fg);
+        border: 1px solid var(--p-border);
+      }
+      .mic.live { background: #ef4444; color: #fff; border-color: #ef4444; }
+      .mic.live svg { animation: pulse 1s infinite; }
+      @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+      .send:hover, .mic:hover { filter: brightness(1.05); }
     </style>`;
   }
 

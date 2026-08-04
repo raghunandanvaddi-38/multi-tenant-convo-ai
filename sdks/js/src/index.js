@@ -147,6 +147,76 @@ export class PlatformClient {
   analyticsSummary(days = 7) {
     return this._json("GET", "/v1/analytics/summary?days=" + encodeURIComponent(String(days)));
   }
+
+  // ---- voice: one-shot STT / TTS -----------------------------------------
+
+  async transcribe(audio, filename) {
+    if (typeof FormData === "undefined") throw new Error("FormData unavailable");
+    const fd = new FormData();
+    fd.append("audio", audio, filename || audio.name || "audio.wav");
+    const res = await this._fetch(this.baseUrl + "/v1/stt", {
+      method: "POST", headers: this._headers(), body: fd,
+    });
+    const txt = await res.text();
+    let data = null; try { data = txt ? JSON.parse(txt) : null; } catch { data = { error: txt }; }
+    if (!res.ok) throw new PlatformError((data && (data.error || data.detail)) || res.statusText, res.status);
+    return data;
+  }
+
+  async synthesize(text, opts = {}) {
+    const res = await this._fetch(this.baseUrl + "/v1/tts", {
+      method: "POST",
+      headers: this._headers({ "content-type": "application/json" }),
+      body: JSON.stringify({ text, voice: opts.voice, provider: opts.provider }),
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      throw new PlatformError(t || res.statusText, res.status);
+    }
+    return res.arrayBuffer();
+  }
+
+  // ---- voice: streaming WebSocket ----------------------------------------
+
+  voiceSocket(opts = {}) {
+    if (typeof WebSocket === "undefined") throw new Error("WebSocket unavailable");
+    const url = new URL(this.baseUrl.replace(/^http/, "ws") + "/v1/ws/voice");
+    url.searchParams.set("api_key", this.apiKey);
+    if (opts.conversationId) url.searchParams.set("conversation_id", opts.conversationId);
+    if (opts.userId || this.userId) url.searchParams.set("user_id", opts.userId || this.userId);
+
+    const ws = new WebSocket(url.toString());
+    ws.binaryType = "arraybuffer";
+    ws.onmessage = (ev) => {
+      if (typeof ev.data !== "string") {
+        // Raw int16 PCM at the rate declared in session_start.audio.output
+        opts.onAudio && opts.onAudio(ev.data);
+        return;
+      }
+      let m = null; try { m = JSON.parse(ev.data); } catch { return; }
+      if (m.type === "session_start") opts.onOpen && opts.onOpen(m);
+      else if (m.type === "status") opts.onStatus && opts.onStatus(m.text);
+      else if (m.type === "partial_transcript") opts.onPartialTranscript && opts.onPartialTranscript(m.text);
+      else if (m.type === "transcript") opts.onTranscript && opts.onTranscript(m.text);
+      else if (m.type === "token") opts.onToken && opts.onToken(m.text);
+      else if (m.type === "done") opts.onDone && opts.onDone(m);
+      else if (m.type === "error") opts.onError && opts.onError(m.text);
+    };
+    ws.onclose = (ev) => opts.onClose && opts.onClose({ code: ev.code, reason: ev.reason });
+
+    const sendAudio = (buf) => {
+      if (ws.readyState !== 1) return;
+      if (buf instanceof Int16Array) buf = buf.buffer;
+      ws.send(buf);
+    };
+    return {
+      sendAudio,
+      sendText: (t) => ws.send(JSON.stringify({ type: "user_text", text: t })),
+      flush:    () => ws.send(JSON.stringify({ type: "flush" })),
+      reset:    () => ws.send(JSON.stringify({ type: "reset" })),
+      close:    () => ws.close(),
+    };
+  }
 }
 
 export class PlatformError extends Error {

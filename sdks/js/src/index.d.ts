@@ -40,6 +40,57 @@ export interface DocumentInfo {
   updated_at: string;
 }
 
+export interface SttResult {
+  transcript: string;
+  usable: boolean;
+  workspace_id: string;
+}
+
+export interface TtsOptions {
+  voice?: string;
+  provider?: "kokoro" | "edge";
+}
+
+export interface AudioFormat {
+  sample_rate: number;
+  channels: number;
+  encoding: "pcm_s16le";
+}
+
+export interface VoiceSessionInfo {
+  conversation_id: string;
+  workspace_id: string;
+  branding: any;
+  audio: { input: AudioFormat; output: AudioFormat };
+  streaming?: { partial_interval_s: number; end_silence_s: number };
+}
+
+export interface VoiceSocketCallbacks {
+  onOpen?: (info: VoiceSessionInfo) => void;
+  onStatus?: (state: "listening" | "thinking" | "speaking" | "idle") => void;
+  /** Live transcript while the user is still speaking (may be revised). */
+  onPartialTranscript?: (text: string) => void;
+  /** Final committed transcript for the utterance. */
+  onTranscript?: (text: string) => void;
+  onToken?: (text: string) => void;
+  /**
+   * Raw int16 little-endian PCM at `session.audio.output.sample_rate`, mono.
+   * No WAV header. Feed straight into AudioContext.createBuffer + start().
+   */
+  onAudio?: (pcm: ArrayBuffer) => void;
+  onDone?: (info: { latency_ms: number }) => void;
+  onError?: (msg: string) => void;
+  onClose?: (info: { code: number; reason: string }) => void;
+}
+
+export interface VoiceSocketHandle {
+  sendAudio: (pcm16: ArrayBuffer | Int16Array) => void;
+  sendText: (text: string) => void;
+  flush: () => void;
+  reset: () => void;
+  close: () => void;
+}
+
 export interface AnalyticsSummary {
   days: number;
   total_messages: number;
@@ -81,4 +132,8 @@ export class PlatformClient {
   deleteDocument(id: string): Promise<void>;
 
   analyticsSummary(days?: number): Promise<AnalyticsSummary>;
+
+  transcribe(audio: File | Blob, filename?: string): Promise<SttResult>;
+  synthesize(text: string, opts?: TtsOptions): Promise<ArrayBuffer>;
+  voiceSocket(opts: { conversationId?: string; userId?: string } & VoiceSocketCallbacks): VoiceSocketHandle;
 }
