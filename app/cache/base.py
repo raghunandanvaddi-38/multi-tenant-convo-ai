@@ -1,0 +1,13 @@
+"""Cache protocol — used for response cache and rate-limit counters."""
+
+from __future__ import annotations
+
+from typing import Optional, Protocol, runtime_checkable
+
+
+@runtime_checkable
+class CacheBackend(Protocol):
+    async def get(self, key: str) -> Optional[str]: ...
+    async def set(self, key: str, value: str, ttl_seconds: int = 0) -> None: ...
+    async def delete(self, key: str) -> None: ...
+    async def incr(self, key: str, ttl_seconds: int = 0) -> int: ...

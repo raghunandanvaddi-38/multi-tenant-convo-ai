@@ -51,6 +51,16 @@ async def root():
         return JSONResponse({"error": "Frontend not found."}, status_code=404)
 
 
+@router.get("/dashboard", include_in_schema=False)
+async def dashboard_page():
+    """Self-service dashboard SPA."""
+    import os as _os
+    path = _os.path.join(STATIC_DIR, "dashboard.html")
+    if not _os.path.isfile(path):
+        return JSONResponse({"error": "dashboard.html not found"}, status_code=404)
+    return FileResponse(path)
+
+
 @router.get("/health")
 async def health():
     try:

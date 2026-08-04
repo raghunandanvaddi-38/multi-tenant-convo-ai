@@ -28,10 +28,18 @@ from fastapi.staticfiles import StaticFiles
 from app.api.routes import router as rest_router
 from app.api.websocket import router as ws_router
 from app.admin.routes import router as admin_router
+from app.auth.routes import router as auth_router
+from app.documents.routes import router as documents_router
+from app.workspaces.routes import router as workspaces_router
+from app.api.chat_routes import router as chat_router
+from app.analytics.routes import router as analytics_router
+from app.middleware.rate_limit import APIKeyRateLimitMiddleware
+from app.middleware.request_id import RequestIDMiddleware
 from app.core.tts import synthesize_chunks, get_engine_name, get_tts_provider, get_default_tts_voice
 from app.core.stt import get_model
 from app.core.agent import ensure_system_initialized
 from app.core.speaker import get_classifier
+from app.database import init_db
 from app.config import STATIC_DIR, LOGS_DIR, LOG_FILE, LOG_MAX_BYTES, LOG_BACKUP_COUNT, APP_VERSION, APP_TITLE
 from warnings import filterwarnings
 
@@ -125,6 +133,7 @@ async def lifespan(app: FastAPI):
     log.info("[startup] Voice agent starting up...")
 
     try:
+        await init_db()
         await _probe_tts()
         await _preload_core_models()
         log.info("[startup] All core systems ready")
@@ -159,4 +168,13 @@ except RuntimeError as e:
 app.include_router(rest_router)
 app.include_router(ws_router)
 app.include_router(admin_router)
+app.include_router(auth_router)
+app.include_router(documents_router)
+app.include_router(workspaces_router)
+app.include_router(chat_router)
+app.include_router(analytics_router)
+
+# Middleware (order matters — request-id first so it wraps everything else)
+app.add_middleware(APIKeyRateLimitMiddleware)
+app.add_middleware(RequestIDMiddleware)
 

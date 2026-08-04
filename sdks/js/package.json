@@ -1,0 +1,12 @@
+{
+  "name": "@platform/sdk",
+  "version": "0.1.0",
+  "description": "Client SDK for the AI Platform (chat, streaming, documents).",
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "type": "module",
+  "files": ["src", "README.md"],
+  "keywords": ["ai", "chatbot", "rag", "conversational-ai"],
+  "license": "MIT",
+  "sideEffects": false
+}

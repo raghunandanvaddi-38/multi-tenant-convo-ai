@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Platform · Dashboard</title>
+<style>
+:root{color-scheme:light dark;
+  --bg:#0f1115; --panel:#171a21; --panel2:#1d212a; --border:#2a2f3a;
+  --text:#e6e8ee; --muted:#8b93a7; --accent:#6aa5ff; --danger:#ff6a6a;
+  --ok:#4ade80; --warn:#facc15; --input:#0b0d12;}
+@media (prefers-color-scheme: light){:root{--bg:#f6f7fb;--panel:#fff;--panel2:#f2f4f9;
+  --border:#e3e6ee;--text:#0f1115;--muted:#5b6478;--input:#fff;}}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 -apple-system,system-ui,sans-serif;color:var(--text);background:var(--bg)}
+a{color:var(--accent);text-decoration:none}
+button{cursor:pointer;font:inherit}
+.btn{padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--panel);color:var(--text)}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.danger{color:var(--danger);border-color:var(--danger)}
+.btn.sm{padding:5px 9px;font-size:12.5px}
+input,select,textarea{width:100%;padding:8px 10px;border-radius:6px;background:var(--input);color:var(--text);border:1px solid var(--border);font:inherit}
+textarea{min-height:180px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px}
+.row{display:grid;grid-template-columns:180px 1fr;gap:12px;align-items:start;margin-bottom:12px}
+.row label{color:var(--muted);font-size:12px;padding-top:6px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:14px}
+h2{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin:0 0 10px}
+h3{font-size:14px;margin:0 0 12px}
+header{display:flex;align-items:center;justify-content:space-between;padding:10px 20px;border-bottom:1px solid var(--border);background:var(--panel);position:sticky;top:0;z-index:10}
+header .brand{font-weight:600}
+main{display:grid;grid-template-columns:220px 1fr;min-height:calc(100vh - 49px)}
+aside{border-right:1px solid var(--border);padding:14px;background:var(--panel)}
+aside .nav a{display:block;padding:8px 10px;border-radius:6px;color:var(--text);margin-bottom:2px}
+aside .nav a.active{background:rgba(106,165,255,0.12);color:var(--accent)}
+aside .ws-picker{margin:10px 0 18px}
+section{padding:22px 28px}
+.subgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.stat{padding:14px 16px;background:var(--panel2);border:1px solid var(--border);border-radius:8px}
+.stat .n{font-size:26px;font-weight:600;margin-top:2px}
+.stat .l{color:var(--muted);font-size:12px}
+table{width:100%;border-collapse:collapse}
+th,td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:left;font-size:13px}
+th{color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase}
+.pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;background:var(--panel2);border:1px solid var(--border)}
+.pill.ok{background:rgba(74,222,128,0.15);color:var(--ok);border-color:var(--ok)}
+.pill.warn{background:rgba(250,204,21,0.15);color:var(--warn);border-color:var(--warn)}
+.pill.err{background:rgba(255,106,106,0.15);color:var(--danger);border-color:var(--danger)}
+.hidden{display:none!important}
+dialog{border:1px solid var(--border);background:var(--panel);color:var(--text);border-radius:10px;padding:20px;max-width:520px;width:90%}
+dialog::backdrop{background:rgba(0,0,0,0.5)}
+.key-box{background:var(--input);padding:12px;border-radius:6px;word-break:break-all;font:12.5px ui-monospace,Menlo,monospace;margin:10px 0}
+.toast{position:fixed;bottom:20px;right:20px;padding:10px 14px;border-radius:6px;background:var(--panel);border:1px solid var(--border);font-size:13px;max-width:480px;z-index:20;display:none}
+.toast.err{border-color:var(--danger);color:var(--danger)}
+.toast.ok{border-color:var(--ok)}
+.auth-shell{display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg)}
+.auth-card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:26px;width:380px}
+.chat{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:12px;height:340px;overflow:auto;margin-bottom:10px}
+.chat .msg{margin-bottom:10px}
+.chat .msg.u{text-align:right}
+.chat .bub{display:inline-block;padding:8px 12px;border-radius:12px;max-width:80%;text-align:left;background:var(--panel)}
+.chat .msg.u .bub{background:var(--accent);color:#fff}
+.actions{display:flex;gap:8px;flex-wrap:wrap}
+.muted{color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+
+<!-- ======================= AUTH SHELL ======================= -->
+<div id="authShell" class="auth-shell hidden">
+  <div class="auth-card">
+    <h2>AI Platform</h2>
+    <h3 id="authTitle">Sign in</h3>
+    <div class="row" style="grid-template-columns:1fr"><input id="authEmail" type="email" placeholder="email" autocomplete="username"></div>
+    <div class="row" style="grid-template-columns:1fr"><input id="authPassword" type="password" placeholder="password" autocomplete="current-password"></div>
+    <div class="row hidden" id="authNameRow" style="grid-template-columns:1fr"><input id="authName" type="text" placeholder="display name (optional)"></div>
+    <div class="actions" style="margin-top:12px">
+      <button class="btn primary" id="authSubmit">Sign in</button>
+      <button class="btn" id="authToggle">Create account</button>
+    </div>
+    <div id="authError" class="muted" style="margin-top:10px;color:var(--danger)"></div>
+  </div>
+</div>
+
+<!-- ======================= APP SHELL ======================= -->
+<div id="app" class="hidden">
+<header>
+  <div class="brand">🤖 AI Platform</div>
+  <div class="actions">
+    <span class="muted" id="whoami"></span>
+    <button class="btn sm" id="logoutBtn">Sign out</button>
+  </div>
+</header>
+
+<main>
+  <aside>
+    <div class="ws-picker">
+      <div class="muted" style="margin-bottom:6px">Workspace</div>
+      <select id="wsSelect"></select>
+      <div class="actions" style="margin-top:8px">
+        <button class="btn sm" id="newWorkspaceBtn">＋ New</button>
+      </div>
+    </div>
+    <div class="nav">
+      <a href="#" data-view="overview">Overview</a>
+      <a href="#" data-view="chat">Try it</a>
+      <a href="#" data-view="documents">Documents</a>
+      <a href="#" data-view="prompt">Prompt</a>
+      <a href="#" data-view="model">Model</a>
+      <a href="#" data-view="branding">Branding</a>
+      <a href="#" data-view="keys">API keys</a>
+      <a href="#" data-view="analytics">Analytics</a>
+      <a href="#" data-view="integrate">Integrate</a>
+    </div>
+  </aside>
+
+  <section id="view"></section>
+</main>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<dialog id="keyDialog">
+  <h3>New API key</h3>
+  <p class="muted">Copy this now — it won't be shown again. Only the SHA-256 hash is stored.</p>
+  <div class="key-box" id="keyValue"></div>
+  <div class="actions">
+    <button class="btn primary" id="keyCopy">Copy</button>
+    <button class="btn" id="keyClose">Close</button>
+  </div>
+</dialog>
+
+<script>
+// ---------- state ----------
+const state = { access:null, refresh:null, me:null, orgs:[], workspaces:[], wsId:null, view:'overview' };
+
+function tok() { return { access: localStorage.getItem('access'), refresh: localStorage.getItem('refresh') }; }
+function saveTok(a, r) { if(a) localStorage.setItem('access', a); if(r) localStorage.setItem('refresh', r); }
+function clearTok() { localStorage.removeItem('access'); localStorage.removeItem('refresh'); localStorage.removeItem('wsId'); }
+
+const $ = id => document.getElementById(id);
+const show = id => $(id).classList.remove('hidden');
+const hide = id => $(id).classList.add('hidden');
+
+function toast(msg, kind='') { const el=$('toast'); el.className='toast '+kind; el.textContent=msg; el.style.display='block';
+  clearTimeout(toast._t); toast._t=setTimeout(()=>el.style.display='none', 3500); }
+
+async function api(method, path, body) {
+  const headers = {'content-type':'application/json'};
+  const t = tok();
+  if (t.access) headers['Authorization'] = 'Bearer ' + t.access;
+  const res = await fetch(path, {method, headers, body: body!==undefined? JSON.stringify(body): undefined });
+  if (res.status === 401 && t.refresh && !path.startsWith('/auth/')) {
+    // try refresh once
+    const rr = await fetch('/auth/refresh', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({refresh_token: t.refresh})});
+    if (rr.ok) { const d = await rr.json(); saveTok(d.access_token, d.refresh_token); return api(method, path, body); }
+    logout(); throw new Error('session expired');
+  }
+  const txt = await res.text();
+  let data = null; try { data = txt? JSON.parse(txt): null; } catch { data = {error: txt}; }
+  if (!res.ok) throw new Error((data && data.error) || data?.detail || res.statusText);
+  return data;
+}
+
+async function apiFile(path, formData) {
+  const headers = {}; const t = tok(); if (t.access) headers['Authorization'] = 'Bearer ' + t.access;
+  const res = await fetch(path, { method:'POST', headers, body: formData });
+  const txt = await res.text();
+  let data = null; try { data = txt? JSON.parse(txt): null; } catch { data = {error: txt}; }
+  if (!res.ok) throw new Error((data && data.error) || data?.detail || res.statusText);
+  return data;
+}
+
+// ---------- auth ----------
+let authMode = 'login';
+function paintAuth() {
+  $('authTitle').textContent = authMode === 'login' ? 'Sign in' : 'Create account';
+  $('authSubmit').textContent = authMode === 'login' ? 'Sign in' : 'Sign up';
+  $('authToggle').textContent = authMode === 'login' ? 'Create account' : 'Have an account? Sign in';
+  $('authNameRow').classList.toggle('hidden', authMode === 'login');
+}
+
+$('authToggle').onclick = () => { authMode = (authMode === 'login' ? 'signup' : 'login'); paintAuth(); };
+$('authSubmit').onclick = async () => {
+  $('authError').textContent = '';
+  const email = $('authEmail').value.trim();
+  const password = $('authPassword').value;
+  const display_name = $('authName').value.trim();
+  const path = authMode === 'login' ? '/auth/login' : '/auth/signup';
+  try {
+    const d = await api('POST', path, authMode==='login'? {email, password}: {email, password, display_name});
+    saveTok(d.access_token, d.refresh_token);
+    await bootApp();
+  } catch (e) { $('authError').textContent = e.message; }
+};
+
+async function bootApp() {
+  hide('authShell'); show('app');
+  state.me = await api('GET', '/auth/me');
+  $('whoami').textContent = state.me.email;
+  await loadOrgsAndWorkspaces();
+  render(state.view);
+}
+
+$('logoutBtn').onclick = () => logout();
+function logout() {
+  clearTok(); state.access=null; state.me=null;
+  show('authShell'); hide('app'); paintAuth();
+}
+
+// ---------- orgs / workspaces ----------
+async function loadOrgsAndWorkspaces() {
+  state.orgs = await api('GET', '/v1/organizations');
+  state.workspaces = [];
+  for (const o of state.orgs) {
+    const ws = await api('GET', `/v1/organizations/${o.id}/workspaces`);
+    for (const w of ws) { w.__orgName = o.name; state.workspaces.push(w); }
+  }
+  const sel = $('wsSelect');
+  sel.innerHTML = state.workspaces.map(w =>
+    `<option value="${w.id}">${w.__orgName} · ${w.name}</option>`).join('');
+  const saved = localStorage.getItem('wsId');
+  if (saved && state.workspaces.some(w => w.id === saved)) state.wsId = saved;
+  else state.wsId = state.workspaces[0]?.id;
+  if (state.wsId) sel.value = state.wsId;
+  sel.onchange = () => { state.wsId = sel.value; localStorage.setItem('wsId', state.wsId); render(state.view); };
+}
+
+$('newWorkspaceBtn').onclick = async () => {
+  const name = prompt('New workspace name?');
+  if (!name) return;
+  const orgId = state.orgs[0].id;
+  try {
+    await api('POST', `/v1/organizations/${orgId}/workspaces`, {name});
+    await loadOrgsAndWorkspaces();
+    toast('Workspace created', 'ok');
+    render(state.view);
+  } catch (e) { toast(e.message, 'err'); }
+};
+
+function currentWs() { return state.workspaces.find(w => w.id === state.wsId); }
+
+// ---------- nav ----------
+document.querySelectorAll('aside .nav a').forEach(a => {
+  a.onclick = (e) => { e.preventDefault(); state.view = a.dataset.view; render(state.view); };
+});
+
+function paintNav() {
+  document.querySelectorAll('aside .nav a').forEach(a => {
+    a.classList.toggle('active', a.dataset.view === state.view);
+  });
+}
+
+// ---------- views ----------
+function render(view) {
+  paintNav();
+  const ws = currentWs();
+  if (!ws) { $('view').innerHTML = '<div class="card">No workspaces yet.</div>'; return; }
+  const fn = views[view] || views.overview;
+  fn(ws);
+}
+
+const views = {};
+
+views.overview = async (ws) => {
+  $('view').innerHTML = `
+    <h3>${ws.name}</h3>
+    <div class="muted">Workspace <code>${ws.id}</code> · organization ${ws.__orgName}</div>
+    <div class="subgrid" style="margin-top:16px">
+      <div class="stat"><div class="l">Model</div><div class="n" style="font-size:15px">${ws.settings?.llm?.provider}/${ws.settings?.llm?.model}</div></div>
+      <div class="stat"><div class="l">Embedding</div><div class="n" style="font-size:15px">${ws.settings?.rag?.embedding_model}</div></div>
+      <div class="stat"><div class="l">Voice</div><div class="n" style="font-size:15px">${ws.settings?.tts?.default_voice||'—'}</div></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Quick actions</h2>
+      <div class="actions">
+        <button class="btn" onclick="state.view='documents';render('documents')">Upload documents</button>
+        <button class="btn" onclick="state.view='prompt';render('prompt')">Edit prompt</button>
+        <button class="btn" onclick="state.view='keys';render('keys')">Create API key</button>
+        <button class="btn" onclick="state.view='integrate';render('integrate')">Integrate</button>
+      </div>
+    </div>`;
+};
+
+views.chat = async (ws) => {
+  $('view').innerHTML = `
+    <h3>Try it</h3>
+    <div class="muted">Uses this workspace's current settings. Pick or create a chat-scope API key on the API keys page.</div>
+    <div class="row" style="margin-top:12px"><label>API key</label>
+      <input id="chatKey" placeholder="sk_..." value="${localStorage.getItem('tryKey')||''}"></div>
+    <div id="chatLog" class="chat"></div>
+    <div style="display:flex;gap:8px">
+      <input id="chatInput" placeholder="Ask something..."/>
+      <button class="btn primary" id="chatSend">Send</button>
+    </div>`;
+  const log = $('chatLog');
+  const push = (role, txt) => {
+    const div = document.createElement('div');
+    div.className = 'msg ' + (role==='u'?'u':'a');
+    div.innerHTML = `<span class="bub"></span>`;
+    div.querySelector('.bub').textContent = txt;
+    log.appendChild(div); log.scrollTop = 1e9;
+    return div.querySelector('.bub');
+  };
+  let convId = null;
+  $('chatSend').onclick = async () => {
+    const key = $('chatKey').value.trim();
+    const message = $('chatInput').value.trim();
+    if (!key || !message) return;
+    localStorage.setItem('tryKey', key);
+    push('u', message); $('chatInput').value = '';
+    const bub = push('a', '…');
+    try {
+      const r = await fetch('/v1/chat/stream', {
+        method:'POST', headers:{'content-type':'application/json', 'x-api-key': key},
+        body: JSON.stringify({message, conversation_id: convId})
+      });
+      if (!r.ok) { bub.textContent = 'error: ' + (await r.text()); return; }
+      bub.textContent = '';
+      const reader = r.body.getReader(); const dec = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const {value, done} = await reader.read(); if (done) break;
+        buf += dec.decode(value, {stream:true});
+        for (const evt of buf.split('\n\n')) {
+          if (!evt.trim()) continue;
+          const lines = evt.split('\n');
+          const type = (lines.find(l=>l.startsWith('event:'))||'event: ').slice(6).trim();
+          const data = (lines.find(l=>l.startsWith('data:'))||'data: ').slice(5).trim();
+          if (!data) continue;
+          try {
+            const d = JSON.parse(data);
+            if (type === 'session') convId = d.conversation_id;
+            if (type === 'token') bub.textContent += d.text;
+            if (type === 'error') bub.textContent += '\n(error: '+d.message+')';
+          } catch {}
+        }
+        buf = buf.substring(buf.lastIndexOf('\n\n')+2);
+      }
+    } catch(e) { bub.textContent = 'error: '+e.message; }
+  };
+  $('chatInput').addEventListener('keydown', e => { if (e.key==='Enter') $('chatSend').click(); });
+};
+
+views.documents = async (ws) => {
+  $('view').innerHTML = `<h3>Documents</h3>
+    <div class="card">
+      <h2>Upload</h2>
+      <div class="muted">PDF, DOCX, TXT, MD, CSV, XLSX, HTML — up to 50 MB.
+        Requires an <b>admin</b>-scope API key.</div>
+      <div class="row" style="margin-top:10px"><label>Admin API key</label>
+        <input id="docKey" placeholder="sk_..." value="${localStorage.getItem('adminKey')||''}"></div>
+      <div class="row"><label>File</label>
+        <input id="docFile" type="file"></div>
+      <div class="actions"><button class="btn primary" id="uploadBtn">Upload</button></div>
+    </div>
+    <div class="card"><h2>Existing documents</h2><div id="docList">Loading…</div></div>`;
+  const loadKey = () => $('docKey').value.trim() || localStorage.getItem('adminKey') || '';
+  async function refresh() {
+    const k = loadKey(); if (!k) { $('docList').textContent = 'Enter an admin API key first.'; return; }
+    localStorage.setItem('adminKey', k);
+    try {
+      const docs = await fetch('/v1/documents', {headers:{'x-api-key': k}}).then(r=>r.json());
+      if (!Array.isArray(docs)) { $('docList').textContent = docs.error||'error'; return; }
+      if (docs.length === 0) { $('docList').innerHTML = '<div class="muted">No documents yet.</div>'; return; }
+      $('docList').innerHTML = `<table><thead><tr>
+        <th>File</th><th>Status</th><th>Chunks</th><th>Size</th><th></th></tr></thead>
+        <tbody>${docs.map(d=>`<tr>
+          <td>${d.filename}</td>
+          <td><span class="pill ${d.status==='ready'?'ok':d.status==='failed'?'err':'warn'}">${d.status}</span></td>
+          <td>${d.chunk_count}</td>
+          <td>${(d.size_bytes/1024).toFixed(1)} KB</td>
+          <td><button class="btn sm danger" data-del="${d.id}">Delete</button></td>
+        </tr>`).join('')}</tbody></table>`;
+      document.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{
+        if(!confirm('Delete?')) return;
+        await fetch('/v1/documents/'+b.dataset.del, {method:'DELETE', headers:{'x-api-key': loadKey()}});
+        refresh();
+      });
+    } catch(e) { $('docList').textContent = e.message; }
+  }
+  $('uploadBtn').onclick = async () => {
+    const k = loadKey(); const f = $('docFile').files[0];
+    if (!k || !f) { toast('key + file required', 'err'); return; }
+    const fd = new FormData(); fd.append('file', f);
+    try {
+      const r = await fetch('/v1/documents', {method:'POST', headers:{'x-api-key': k}, body: fd});
+      if (!r.ok) throw new Error(await r.text());
+      toast('Uploaded — indexing in background', 'ok');
+      refresh();
+      setTimeout(refresh, 2000); setTimeout(refresh, 5000);
+    } catch(e) { toast(e.message, 'err'); }
+  };
+  refresh();
+};
+
+views.prompt = async (ws) => {
+  const tpl = ws.settings?.prompt?.template || '';
+  $('view').innerHTML = `<h3>Prompt template</h3>
+    <div class="muted">Placeholders: <code>{conversation_history}</code>, <code>{context}</code>, <code>{query}</code></div>
+    <div class="card"><textarea id="tplBox">${tpl.replace(/</g,'&lt;')}</textarea>
+      <div class="actions" style="margin-top:8px">
+        <button class="btn primary" id="savePrompt">Save</button>
+      </div>
+    </div>
+    <div class="card"><h2>History</h2><div id="verList">Loading…</div></div>`;
+  $('savePrompt').onclick = async () => {
+    try {
+      await api('PATCH', `/v1/workspaces/${ws.id}`, {settings:{prompt:{template: $('tplBox').value}}});
+      toast('Saved', 'ok'); await loadOrgsAndWorkspaces(); render('prompt');
+    } catch(e){ toast(e.message,'err'); }
+  };
+  try {
+    const versions = await api('GET', `/v1/workspaces/${ws.id}/prompt-versions`);
+    if (!versions.length) { $('verList').innerHTML = '<div class="muted">No previous versions.</div>'; return; }
+    $('verList').innerHTML = `<table><thead><tr><th>#</th><th>When</th><th>Note</th><th></th></tr></thead>
+      <tbody>${versions.map(v=>`<tr>
+        <td>v${v.version}</td>
+        <td class="muted">${new Date(v.created_at).toLocaleString()}</td>
+        <td>${v.note||'—'}</td>
+        <td><button class="btn sm" data-rev="${v.version}">Revert</button></td>
+      </tr>`).join('')}</tbody></table>`;
+    document.querySelectorAll('[data-rev]').forEach(b=>b.onclick=async()=>{
+      if(!confirm('Revert prompt to v'+b.dataset.rev+'?')) return;
+      await api('POST', `/v1/workspaces/${ws.id}/prompt-versions/revert`, {version: parseInt(b.dataset.rev)});
+      toast('Reverted','ok'); await loadOrgsAndWorkspaces(); render('prompt');
+    });
+  } catch(e){ $('verList').textContent = e.message; }
+};
+
+views.model = async (ws) => {
+  const llm = ws.settings?.llm || {};
+  const rag = ws.settings?.rag || {};
+  $('view').innerHTML = `<h3>Model</h3>
+    <div class="card"><h2>LLM</h2>
+      <div class="row"><label>provider</label><input name="llm.provider" value="${llm.provider||'ollama'}"></div>
+      <div class="row"><label>model</label><input name="llm.model" value="${llm.model||''}"></div>
+      <div class="row"><label>base_url</label><input name="llm.base_url" value="${llm.base_url||''}"></div>
+      <div class="row"><label>temperature</label><input name="llm.temperature" type="number" step="0.05" value="${llm.temperature??0.1}"></div>
+      <div class="row"><label>max_tokens</label><input name="llm.max_tokens" type="number" value="${llm.max_tokens??150}"></div>
+      <div class="row"><label>context_window</label><input name="llm.context_window" type="number" value="${llm.context_window??2048}"></div>
+    </div>
+    <div class="card"><h2>RAG</h2>
+      <div class="row"><label>embedding_model</label><input name="rag.embedding_model" value="${rag.embedding_model||''}"></div>
+      <div class="row"><label>chunk_size</label><input name="rag.chunk_size" type="number" value="${rag.chunk_size??150}"></div>
+      <div class="row"><label>top_k</label><input name="rag.top_k" type="number" value="${rag.top_k??2}"></div>
+    </div>
+    <div class="actions"><button class="btn primary" id="saveModel">Save</button></div>`;
+  $('saveModel').onclick = async () => {
+    const patch = {};
+    document.querySelectorAll('input[name]').forEach(el=>{
+      let v = el.value; if (el.type==='number') v = v===''?null:Number(v);
+      const [g,k]=el.name.split('.'); patch[g]=patch[g]||{}; patch[g][k]=v;
+    });
+    try { await api('PATCH', `/v1/workspaces/${ws.id}`, {settings:patch});
+      toast('Saved','ok'); await loadOrgsAndWorkspaces(); render('model');
+    } catch(e){ toast(e.message,'err'); }
+  };
+};
+
+views.branding = async (ws) => {
+  const b = ws.settings?.branding || {};
+  $('view').innerHTML = `<h3>Branding</h3>
+    <div class="card">
+      <div class="row"><label>bot_name</label><input name="branding.bot_name" value="${b.bot_name||''}"></div>
+      <div class="row"><label>primary_color</label><input name="branding.primary_color" value="${b.primary_color||'#6aa5ff'}"></div>
+      <div class="row"><label>welcome_message</label><input name="branding.welcome_message" value="${b.welcome_message||''}"></div>
+      <div class="row"><label>widget_position</label>
+        <select name="branding.widget_position">
+          ${['bottom-right','bottom-left','top-right','top-left'].map(p=>`<option ${b.widget_position===p?'selected':''}>${p}</option>`).join('')}
+        </select></div>
+      <div class="row"><label>theme</label>
+        <select name="branding.theme">${['auto','light','dark'].map(p=>`<option ${b.theme===p?'selected':''}>${p}</option>`).join('')}</select></div>
+      <div class="actions"><button class="btn primary" id="saveBrand">Save</button></div>
+    </div>`;
+  $('saveBrand').onclick = async () => {
+    const patch = {branding:{}};
+    document.querySelectorAll('input[name],select[name]').forEach(el=>{
+      const [,k]=el.name.split('.'); patch.branding[k]=el.value;
+    });
+    try { await api('PATCH', `/v1/workspaces/${ws.id}`, {settings:patch});
+      toast('Saved','ok'); await loadOrgsAndWorkspaces(); render('branding');
+    } catch(e){ toast(e.message,'err'); }
+  };
+};
+
+views.keys = async (ws) => {
+  $('view').innerHTML = `<h3>API keys</h3>
+    <div class="card"><h2>Create</h2>
+      <div class="row"><label>name</label><input id="keyName" placeholder="prod-widget"></div>
+      <div class="row"><label>scopes</label>
+        <select id="keyScopes">
+          <option value="chat,read">chat + read (widget, SDK)</option>
+          <option value="admin">admin (uploads, settings)</option>
+          <option value="chat">chat only</option>
+        </select></div>
+      <div class="actions"><button class="btn primary" id="createKey">Create</button></div>
+    </div>
+    <div class="card"><h2>Existing</h2><div id="keyList">Loading…</div></div>`;
+  async function refresh() {
+    const keys = await api('GET', `/v1/workspaces/${ws.id}/api-keys`);
+    if (!keys.length) { $('keyList').innerHTML = '<div class="muted">No keys yet.</div>'; return; }
+    $('keyList').innerHTML = `<table><thead><tr>
+      <th>Name</th><th>Prefix</th><th>Scopes</th><th>Status</th><th>Last used</th><th></th></tr></thead>
+      <tbody>${keys.map(k=>`<tr>
+        <td>${k.name||'—'}</td>
+        <td><code>sk_${k.prefix}_…</code></td>
+        <td>${k.scopes.join(', ')}</td>
+        <td><span class="pill ${k.is_active?'ok':'err'}">${k.is_active?'active':'revoked'}</span></td>
+        <td class="muted">${k.last_used_at? new Date(k.last_used_at).toLocaleString(): 'never'}</td>
+        <td>${k.is_active?`<button class="btn sm danger" data-rev="${k.id}">Revoke</button>`:''}</td>
+      </tr>`).join('')}</tbody></table>`;
+    document.querySelectorAll('[data-rev]').forEach(b=>b.onclick=async()=>{
+      if(!confirm('Revoke this key?')) return;
+      await api('DELETE', `/v1/workspaces/${ws.id}/api-keys/${b.dataset.rev}`);
+      toast('Revoked','ok'); refresh();
+    });
+  }
+  $('createKey').onclick = async () => {
+    try {
+      const d = await api('POST', `/v1/workspaces/${ws.id}/api-keys`,
+        {name: $('keyName').value.trim(), scopes: $('keyScopes').value});
+      $('keyValue').textContent = d.key; $('keyDialog').showModal(); refresh();
+    } catch(e){ toast(e.message,'err'); }
+  };
+  refresh();
+};
+
+views.analytics = async (ws) => {
+  const s = await api('GET', `/v1/analytics/workspaces/${ws.id}/summary?days=7`);
+  $('view').innerHTML = `<h3>Analytics · last ${s.days} days</h3>
+    <div class="subgrid">
+      <div class="stat"><div class="l">Messages</div><div class="n">${s.total_messages}</div></div>
+      <div class="stat"><div class="l">Conversations</div><div class="n">${s.unique_conversations}</div></div>
+      <div class="stat"><div class="l">Tokens out</div><div class="n">${s.total_tokens_out}</div></div>
+      <div class="stat"><div class="l">Avg latency</div><div class="n">${s.avg_latency_ms}ms</div></div>
+      <div class="stat"><div class="l">Errors</div><div class="n">${s.errors}</div></div>
+    </div>
+    <div class="card" style="margin-top:16px"><h2>Top questions</h2>
+    ${s.top_queries.length? `<table><thead><tr><th>Query</th><th>Count</th></tr></thead>
+        <tbody>${s.top_queries.map(q=>`<tr><td>${q.query.slice(0,200)}</td><td>${q.count}</td></tr>`).join('')}</tbody></table>`
+      : '<div class="muted">No messages yet.</div>'}</div>`;
+};
+
+views.integrate = async (ws) => {
+  const host = location.origin;
+  const snippet =
+`<script src="${host}/static/widget.js" data-workspace="${ws.id}"><\/script>
+<script>
+  Platform.init({
+    apiKey: "sk_..." /* create one on the API keys page */,
+    baseUrl: "${host}"
+  });
+<\/script>`;
+  const curl = `curl -X POST ${host}/v1/chat \\
+  -H "x-api-key: sk_..." -H "content-type: application/json" \\
+  -d '{"message":"hello"}'`;
+  $('view').innerHTML = `<h3>Integrate</h3>
+    <div class="card"><h2>Embed widget</h2>
+      <div class="muted">Drop this into your website. Branding + settings come from this workspace.</div>
+      <pre class="key-box" style="white-space:pre-wrap">${snippet.replace(/</g,'&lt;')}</pre>
+    </div>
+    <div class="card"><h2>REST</h2>
+      <pre class="key-box" style="white-space:pre-wrap">${curl}</pre>
+    </div>
+    <div class="card"><h2>WebSocket</h2>
+      <pre class="key-box" style="white-space:pre-wrap">${host.replace('http','ws')}/v1/ws/chat?api_key=sk_...&user_id=USER</pre>
+    </div>`;
+};
+
+// ---------- dialogs ----------
+$('keyCopy').onclick = () => navigator.clipboard.writeText($('keyValue').textContent).then(()=>toast('Copied','ok'));
+$('keyClose').onclick = () => $('keyDialog').close();
+
+// ---------- boot ----------
+if (tok().access) bootApp().catch(()=>{ show('authShell'); paintAuth(); });
+else { show('authShell'); paintAuth(); }
+</script>
+</body>
+</html>

@@ -43,8 +43,9 @@ class ConversationService:
     @property
     def memory(self) -> MemoryStore: return self._memory
 
-    def _history_text(self, ctx: TenantContext) -> str:
-        limit = ctx.config.llm.chat_history_limit
+    def _history_text(self, ctx) -> str:
+        # Works with both TenantContext (dataclass) and WorkspaceContext (dict shim).
+        limit = getattr(ctx.config.llm, "chat_history_limit", 5) or 5
         history = self._memory.get(ctx.memory_key)["history"]
         entries = []
         for msg in history[-(limit * 2):]:
@@ -89,9 +90,10 @@ class ConversationService:
                 full += token
                 yield token
         except Exception as e:
+            provider = getattr(ctx.config.llm, "provider", "?")
             log.error(
                 "[conversation] tenant=%s provider=%s error=%s",
-                ctx.tenant_id, ctx.config.llm.provider, e,
+                ctx.tenant_id, provider, e,
             )
             fallback = "Sorry, something went wrong."
             yield fallback
