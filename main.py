@@ -27,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from app.api.routes import router as rest_router
 from app.api.websocket import router as ws_router
+from app.admin.routes import router as admin_router
 from app.core.tts import synthesize_chunks, get_engine_name, get_tts_provider, get_default_tts_voice
 from app.core.stt import get_model
 from app.core.agent import ensure_system_initialized
@@ -157,4 +158,5 @@ except RuntimeError as e:
 # Include API and WebSocket routes
 app.include_router(rest_router)
 app.include_router(ws_router)
+app.include_router(admin_router)
 

@@ -188,9 +188,16 @@ def get_model():
     }
     torch_dtype = dtype_map.get(resolved_dtype_name, torch.float32)
 
+    # Passing an explicit device (e.g. "cuda:0") to transformers' `device_map`
+    # routes the load through the meta-tensor path and then fails on `.to()`
+    # with: "Cannot copy out of meta tensor". Use "auto" for device_map and
+    # disable the low_cpu_mem_usage meta-init entirely — safer on a single GPU.
+    device_map_arg = "auto" if resolved_device.startswith("cuda") else resolved_device
+
     init_kwargs: dict = {
         "dtype": torch_dtype,
-        "device_map": resolved_device,
+        "device_map": device_map_arg,
+        "low_cpu_mem_usage": False,
         "max_inference_batch_size": STT_MAX_BATCH_SIZE,
         "max_new_tokens": STT_MAX_NEW_TOKENS,
     }
@@ -201,7 +208,8 @@ def get_model():
     if STT_ALIGNER_MODEL:
         aligner_kwargs: dict = {
             "dtype": torch_dtype,
-            "device_map": resolved_device,
+            "device_map": device_map_arg,
+            "low_cpu_mem_usage": False,
         }
         if use_flash_attn:
             aligner_kwargs["attn_implementation"] = "flash_attention_2"

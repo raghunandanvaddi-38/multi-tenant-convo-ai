@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tenant admin</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0f1115; --panel: #171a21; --border: #2a2f3a; --text: #e6e8ee;
+      --muted: #8b93a7; --accent: #6aa5ff; --danger: #ff6a6a; --ok: #4ade80;
+      --input: #0b0d12;
+    }
+    @media (prefers-color-scheme: light) {
+      :root { --bg:#f6f7fb; --panel:#ffffff; --border:#e3e6ee; --text:#0f1115;
+              --muted:#5b6478; --input:#ffffff; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.5 -apple-system, system-ui, sans-serif;
+           color: var(--text); background: var(--bg); }
+    header { display: flex; align-items: center; justify-content: space-between;
+             padding: 12px 20px; border-bottom: 1px solid var(--border);
+             background: var(--panel); }
+    header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+    header .who { color: var(--muted); font-size: 12px; }
+    main { display: grid; grid-template-columns: 300px 1fr; height: calc(100vh - 49px); }
+    aside { border-right: 1px solid var(--border); background: var(--panel);
+            overflow: auto; }
+    aside .toolbar { padding: 10px 12px; border-bottom: 1px solid var(--border);
+                     display: flex; gap: 8px; }
+    aside ul { list-style: none; margin: 0; padding: 6px 0; }
+    aside li { padding: 10px 14px; cursor: pointer; border-left: 3px solid transparent; }
+    aside li:hover { background: rgba(127,127,127,0.08); }
+    aside li.active { border-left-color: var(--accent); background: rgba(106,165,255,0.08); }
+    aside li .name { font-weight: 500; }
+    aside li .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    aside li .badge { display: inline-block; font-size: 10px; padding: 1px 6px;
+                      border-radius: 3px; background: var(--border); margin-left: 6px; }
+    aside li .badge.ok { background: rgba(74,222,128,0.18); color: var(--ok); }
+    section { padding: 20px 24px; overflow: auto; }
+    .row { display: grid; grid-template-columns: 180px 1fr; gap: 12px;
+           align-items: start; margin-bottom: 12px; }
+    .row label { color: var(--muted); font-size: 12px; padding-top: 6px; }
+    input, textarea, select {
+      width: 100%; padding: 8px 10px; border-radius: 6px;
+      background: var(--input); color: var(--text);
+      border: 1px solid var(--border); font: inherit;
+    }
+    textarea { min-height: 140px; font-family: ui-monospace, Menlo, monospace;
+               font-size: 12.5px; }
+    .subgrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .btn { padding: 8px 14px; border-radius: 6px; border: 1px solid var(--border);
+           background: var(--panel); color: var(--text); cursor: pointer;
+           font: inherit; }
+    .btn:hover { border-color: var(--accent); }
+    .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn.danger  { color: var(--danger); border-color: var(--danger); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn.sm { padding: 5px 9px; font-size: 12px; }
+    h2 { font-size: 14px; margin: 24px 0 10px; color: var(--muted);
+         text-transform: uppercase; letter-spacing: 0.06em; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .empty { color: var(--muted); padding: 40px; text-align: center; }
+    .toast { position: fixed; bottom: 20px; right: 20px; padding: 10px 14px;
+             border-radius: 6px; background: var(--panel); border: 1px solid var(--border);
+             font-size: 13px; max-width: 480px; }
+    .toast.err { border-color: var(--danger); color: var(--danger); }
+    .toast.ok  { border-color: var(--ok); }
+    dialog { border: 1px solid var(--border); background: var(--panel);
+             color: var(--text); border-radius: 10px; padding: 18px 20px;
+             max-width: 520px; width: 90%; }
+    dialog::backdrop { background: rgba(0,0,0,0.5); }
+    dialog h3 { margin-top: 0; font-size: 15px; }
+    code { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px;
+           background: var(--input); padding: 2px 6px; border-radius: 4px; }
+    .key-box { background: var(--input); padding: 12px; border-radius: 6px;
+               word-break: break-all; font-family: ui-monospace, Menlo, monospace;
+               font-size: 12.5px; margin: 10px 0; }
+    hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🛠 Tenant admin</h1>
+  <div class="who">
+    <span id="tokenStatus" class="muted">no token</span>
+    <button class="btn sm" id="changeTokenBtn">Change token</button>
+  </div>
+</header>
+
+<main>
+  <aside>
+    <div class="toolbar">
+      <button class="btn sm primary" id="newBtn">＋ New tenant</button>
+      <button class="btn sm" id="reloadBtn">Reload</button>
+    </div>
+    <ul id="tenantList"></ul>
+  </aside>
+
+  <section id="detail">
+    <div class="empty">Select a tenant on the left, or create a new one.</div>
+  </section>
+</main>
+
+<div id="toast" class="toast" style="display:none"></div>
+
+<dialog id="tokenDialog">
+  <h3>Admin token</h3>
+  <p>Set the <code>ADMIN_TOKEN</code> env var when starting the server, then paste it here. Stored in your browser only.</p>
+  <input type="password" id="tokenInput" placeholder="paste token" autocomplete="off">
+  <div class="actions" style="margin-top:12px">
+    <button class="btn primary" id="tokenSave">Save</button>
+    <button class="btn" id="tokenCancel">Cancel</button>
+  </div>
+</dialog>
+
+<dialog id="keyDialog">
+  <h3>New API key</h3>
+  <p>Copy this now — it will not be shown again. Only the SHA-256 hash is stored on the server.</p>
+  <div class="key-box" id="keyValue"></div>
+  <div class="actions">
+    <button class="btn primary" id="keyCopy">Copy</button>
+    <button class="btn" id="keyClose">Close</button>
+  </div>
+</dialog>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const state = { tenants: [], selected: null, dirty: false };
+
+function tokenGet() { return localStorage.getItem("adminToken") || ""; }
+function tokenSet(v) { localStorage.setItem("adminToken", v || ""); paintToken(); }
+function paintToken() {
+  const t = tokenGet();
+  $("tokenStatus").textContent = t ? `token: ${t.slice(0,4)}…${t.slice(-4)}` : "no token";
+}
+
+function toast(msg, kind="") {
+  const el = $("toast");
+  el.className = "toast " + kind;
+  el.textContent = msg;
+  el.style.display = "block";
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { el.style.display = "none"; }, 3500);
+}
+
+async function api(method, path, body) {
+  const headers = { "x-admin-token": tokenGet() };
+  if (body !== undefined) headers["content-type"] = "application/json";
+  const res = await fetch(path, {
+    method, headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { data = { error: text }; }
+  if (!res.ok) throw new Error((data && data.error) || res.statusText);
+  return data;
+}
+
+// --- List ---
+async function loadList() {
+  try {
+    state.tenants = await api("GET", "/admin/tenants");
+    renderList();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+function renderList() {
+  const ul = $("tenantList");
+  ul.innerHTML = "";
+  state.tenants.forEach(t => {
+    const li = document.createElement("li");
+    if (state.selected && state.selected.tenant_id === t.tenant_id) li.className = "active";
+    const badge = t.has_api_key
+      ? `<span class="badge ok">key</span>` : `<span class="badge">no key</span>`;
+    li.innerHTML = `<div class="name">${t.display_name || t.tenant_id} ${badge}</div>
+                    <div class="meta">${t.tenant_id} · ${t.llm_provider}/${t.llm_model}</div>`;
+    li.onclick = () => selectTenant(t.tenant_id);
+    ul.appendChild(li);
+  });
+}
+
+// --- Detail form ---
+async function selectTenant(id) {
+  if (state.dirty && !confirm("Discard unsaved changes?")) return;
+  try {
+    const data = await api("GET", `/admin/tenants/${encodeURIComponent(id)}`);
+    state.selected = data;
+    state.dirty = false;
+    renderList();
+    renderForm(data);
+  } catch (e) { toast(e.message, "err"); }
+}
+
+function field(label, name, value, opts={}) {
+  const type = opts.type || "text";
+  const raw = value ?? "";
+  const el = type === "textarea"
+    ? `<textarea name="${name}">${escapeHtml(raw)}</textarea>`
+    : `<input name="${name}" type="${type}" value="${escapeHtml(String(raw))}">`;
+  return `<div class="row"><label>${label}</label><div>${el}</div></div>`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" })[c]);
+}
+
+function renderForm(t) {
+  const isNew = t.__new === true;
+  const llm = t.llm || {}, rag = t.rag || {}, tts = t.tts || {}, stt = t.stt || {};
+  $("detail").innerHTML = `
+    <div class="actions" style="justify-content:space-between;margin-bottom:14px">
+      <div>
+        <strong>${isNew ? "New tenant" : t.display_name || t.tenant_id}</strong>
+        <span style="color:var(--muted);margin-left:8px">${t.tenant_id || ""}</span>
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="saveBtn">${isNew ? "Create" : "Save"}</button>
+        ${!isNew ? `<button class="btn" id="rotateBtn">Rotate API key</button>` : ""}
+        ${!isNew && t.has_api_key ? `<button class="btn" id="clearKeyBtn">Clear key</button>` : ""}
+        ${!isNew ? `<button class="btn danger" id="deleteBtn">Delete</button>` : ""}
+      </div>
+    </div>
+
+    <h2>Identity</h2>
+    ${field("tenant_id", "tenant_id", t.tenant_id, { type: isNew ? "text" : "text" })}
+    ${field("display_name", "display_name", t.display_name)}
+    ${!isNew ? `<div class="row"><label>API key</label><div style="padding-top:6px;color:var(--muted)">${t.has_api_key ? "configured (hash stored)" : "not set — clients skip auth"}</div></div>` : ""}
+
+    <h2>LLM</h2>
+    <div class="row"><label>provider</label><div>
+      <select name="llm.provider">
+        <option ${llm.provider === "ollama" ? "selected" : ""}>ollama</option>
+      </select>
+    </div></div>
+    ${field("model", "llm.model", llm.model)}
+    ${field("base_url", "llm.base_url", llm.base_url || "http://localhost:11434")}
+    <div class="row"><label>tuning</label><div class="subgrid">
+      <input name="llm.temperature" type="number" step="0.05" value="${llm.temperature ?? 0.1}" placeholder="temperature">
+      <input name="llm.max_tokens" type="number" value="${llm.max_tokens ?? 150}" placeholder="max_tokens">
+      <input name="llm.context_window" type="number" value="${llm.context_window ?? 2048}" placeholder="context_window">
+      <input name="llm.request_timeout" type="number" value="${llm.request_timeout ?? 30}" placeholder="request_timeout">
+    </div></div>
+
+    <h2>Prompt template</h2>
+    <div class="row"><label>placeholders: {conversation_history} {context} {query}</label><div>
+      <textarea name="prompt_template">${escapeHtml(t.prompt_template || "")}</textarea>
+    </div></div>
+
+    <h2>RAG</h2>
+    ${field("embedding_model", "rag.embedding_model", rag.embedding_model || "all-MiniLM-L6-v2")}
+    ${field("knowledge_dir", "rag.knowledge_dir", rag.knowledge_dir)}
+    ${field("index_path", "rag.index_path", rag.index_path)}
+    ${field("chunks_path", "rag.chunks_path", rag.chunks_path)}
+    <div class="row"><label>retrieval</label><div class="subgrid">
+      <input name="rag.chunk_size" type="number" value="${rag.chunk_size ?? 150}" placeholder="chunk_size">
+      <input name="rag.top_k" type="number" value="${rag.top_k ?? 2}" placeholder="top_k">
+    </div></div>
+
+    <h2>TTS · STT</h2>
+    ${field("tts.provider", "tts.provider", tts.provider || "kokoro")}
+    ${field("tts.default_voice", "tts.default_voice", tts.default_voice || "af_heart")}
+    ${field("stt.model", "stt.model", stt.model || "Qwen/Qwen3-ASR-1.7B")}
+    ${field("stt.language", "stt.language", stt.language || "English")}
+  `;
+
+  $("detail").querySelectorAll("input, textarea, select").forEach(el => {
+    el.addEventListener("input", () => { state.dirty = true; });
+  });
+  $("saveBtn").onclick = () => save(isNew);
+  const del = $("deleteBtn"); if (del) del.onclick = () => remove(t.tenant_id);
+  const rot = $("rotateBtn"); if (rot) rot.onclick = () => rotate(t.tenant_id);
+  const clr = $("clearKeyBtn"); if (clr) clr.onclick = () => clearKey(t.tenant_id);
+}
+
+function collectForm() {
+  const out = {};
+  $("detail").querySelectorAll("input, textarea, select").forEach(el => {
+    let v = el.value;
+    if (el.type === "number") v = v === "" ? null : Number(v);
+    setPath(out, el.name, v);
+  });
+  return out;
+}
+
+function setPath(obj, path, value) {
+  const parts = path.split(".");
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    cur[parts[i]] = cur[parts[i]] || {};
+    cur = cur[parts[i]];
+  }
+  cur[parts[parts.length - 1]] = value;
+}
+
+async function save(isNew) {
+  const body = collectForm();
+  try {
+    if (isNew) {
+      const created = await api("POST", "/admin/tenants", body);
+      toast("Tenant created", "ok");
+      await loadList();
+      selectTenant(created.tenant_id);
+    } else {
+      const id = state.selected.tenant_id;
+      await api("PUT", `/admin/tenants/${encodeURIComponent(id)}`, body);
+      toast("Saved", "ok");
+      state.dirty = false;
+      await loadList();
+      selectTenant(id);
+    }
+  } catch (e) { toast(e.message, "err"); }
+}
+
+async function remove(id) {
+  if (!confirm(`Delete tenant "${id}"? Config file will be removed.`)) return;
+  try {
+    await api("DELETE", `/admin/tenants/${encodeURIComponent(id)}`);
+    state.selected = null;
+    $("detail").innerHTML = `<div class="empty">Deleted.</div>`;
+    await loadList();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+async function rotate(id) {
+  if (!confirm("Rotate API key? The old key will stop working immediately.")) return;
+  try {
+    const { api_key } = await api("POST", `/admin/tenants/${encodeURIComponent(id)}/api-key`);
+    $("keyValue").textContent = api_key;
+    $("keyDialog").showModal();
+    await loadList();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+async function clearKey(id) {
+  if (!confirm("Clear API key? Clients will no longer need authentication.")) return;
+  try {
+    await api("DELETE", `/admin/tenants/${encodeURIComponent(id)}/api-key`);
+    toast("Key cleared", "ok");
+    await loadList();
+    selectTenant(id);
+  } catch (e) { toast(e.message, "err"); }
+}
+
+function newTenant() {
+  state.selected = { __new: true, tenant_id: "", display_name: "" };
+  state.dirty = false;
+  document.querySelectorAll("aside li").forEach(li => li.classList.remove("active"));
+  renderForm(state.selected);
+}
+
+// --- Wiring ---
+$("newBtn").onclick = newTenant;
+$("reloadBtn").onclick = loadList;
+$("changeTokenBtn").onclick = () => { $("tokenInput").value = tokenGet(); $("tokenDialog").showModal(); };
+$("tokenSave").onclick = () => { tokenSet($("tokenInput").value.trim()); $("tokenDialog").close(); loadList(); };
+$("tokenCancel").onclick = () => $("tokenDialog").close();
+$("keyClose").onclick = () => $("keyDialog").close();
+$("keyCopy").onclick = () => navigator.clipboard.writeText($("keyValue").textContent).then(() => toast("Copied", "ok"));
+
+paintToken();
+if (!tokenGet()) $("tokenDialog").showModal();
+else loadList();
+</script>
+</body>
+</html>

@@ -47,4 +47,5 @@ langchain-core>=1.0.0
 langgraph>=1.0.0
 edge-tts>=7.0.0
 qwen-asr==0.0.6
-# chatterbox-tts 
+PyYAML>=6.0
+# chatterbox-tts
