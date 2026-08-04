@@ -16,8 +16,10 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from app.gateway.ai_gateway import AIGateway, get_gateway
 from app.rag.tenant_rag import TenantRAGService, get_rag_service
+from app.rag.workspace_rag import WorkspaceRAGService, get_workspace_rag
 from app.services.memory_store import MemoryStore, get_memory_store
 from app.tenant.context import TenantContext
+from app.workspaces.context import WorkspaceContext
 
 
 log = logging.getLogger("conversation")
@@ -27,21 +29,30 @@ class ConversationService:
     def __init__(
         self,
         gateway: Optional[AIGateway] = None,
-        rag: Optional[TenantRAGService] = None,
+        rag=None,                                    # legacy TenantRAGService (or a mock)
+        workspace_rag: Optional[WorkspaceRAGService] = None,
         memory: Optional[MemoryStore] = None,
     ):
         self._gateway = gateway or get_gateway()
         self._rag = rag or get_rag_service()
+        self._workspace_rag = workspace_rag or get_workspace_rag()
         self._memory = memory or get_memory_store()
 
     @property
     def gateway(self) -> AIGateway: return self._gateway
 
     @property
-    def rag(self) -> TenantRAGService: return self._rag
+    def rag(self): return self._rag
+
+    @property
+    def workspace_rag(self) -> WorkspaceRAGService: return self._workspace_rag
 
     @property
     def memory(self) -> MemoryStore: return self._memory
+
+    def _rag_for(self, ctx):
+        """Dispatch: WorkspaceContext → DB-backed RAG, TenantContext → YAML RAG."""
+        return self._workspace_rag if isinstance(ctx, WorkspaceContext) else self._rag
 
     def _history_text(self, ctx) -> str:
         # Works with both TenantContext (dataclass) and WorkspaceContext (dict shim).
@@ -74,7 +85,7 @@ class ConversationService:
             self._memory.append_assistant(ctx.memory_key, cached)
             return
 
-        top_chunks = await self._rag.retrieve(ctx, user_text)
+        top_chunks = await self._rag_for(ctx).retrieve(ctx, user_text)
         context_str = "\n\n".join(str(c) for c in top_chunks)
         conversation_history = self._history_text(ctx)
 

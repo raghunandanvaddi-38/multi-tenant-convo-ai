@@ -385,7 +385,8 @@ views.documents = async (ws) => {
       <div class="row" style="margin-top:10px"><label>Admin API key</label>
         <input id="docKey" placeholder="sk_..." value="${localStorage.getItem('adminKey')||''}"></div>
       <div class="row"><label>File</label>
-        <input id="docFile" type="file"></div>
+        <input id="docFile" type="file"
+               accept=".pdf,.docx,.txt,.md,.markdown,.csv,.xlsx,.html,.htm"></div>
       <div class="actions"><button class="btn primary" id="uploadBtn">Upload</button></div>
     </div>
     <div class="card"><h2>Existing documents</h2><div id="docList">Loading…</div></div>`;
@@ -413,13 +414,24 @@ views.documents = async (ws) => {
       });
     } catch(e) { $('docList').textContent = e.message; }
   }
+  const ALLOWED_EXT = ['.pdf','.docx','.txt','.md','.markdown','.csv','.xlsx','.html','.htm'];
   $('uploadBtn').onclick = async () => {
     const k = loadKey(); const f = $('docFile').files[0];
     if (!k || !f) { toast('key + file required', 'err'); return; }
+    const dot = f.name.lastIndexOf('.');
+    const ext = dot >= 0 ? f.name.slice(dot).toLowerCase() : '';
+    if (!ALLOWED_EXT.includes(ext)) {
+      toast(`Unsupported file type "${ext}". Allowed: ${ALLOWED_EXT.join(', ')}. For Apple Pages/Numbers/Keynote, export as PDF first.`, 'err');
+      return;
+    }
     const fd = new FormData(); fd.append('file', f);
     try {
       const r = await fetch('/v1/documents', {method:'POST', headers:{'x-api-key': k}, body: fd});
-      if (!r.ok) throw new Error(await r.text());
+      const txt = await r.text();
+      if (!r.ok) {
+        let data = null; try { data = JSON.parse(txt); } catch {}
+        throw new Error((data && data.error) || txt || r.statusText);
+      }
       toast('Uploaded — indexing in background', 'ok');
       refresh();
       setTimeout(refresh, 2000); setTimeout(refresh, 5000);

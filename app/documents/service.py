@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.engine import async_session_factory
 from app.documents.chunker import chunk_text
-from app.documents.extractors import extract
+from app.documents.extractors import extract, EXTRACTORS, supported_extensions
 from app.models import Document, DocumentStatus, Workspace
 from app.rag.workspace_rag import get_workspace_rag
 from app.storage import get_storage
@@ -65,6 +65,18 @@ class DocumentService:
             raise DocumentError(f"File exceeds {MAX_UPLOAD_BYTES} bytes", status=413)
         if len(data) == 0:
             raise DocumentError("Empty file", status=400)
+
+        # Reject unsupported extensions upfront rather than accepting the file
+        # and failing async. Apple .pages / .numbers / .keynote are proprietary
+        # zips we can't read; users should export to PDF/DOCX first.
+        ext = os.path.splitext((filename or "").lower())[1]
+        if ext and ext not in EXTRACTORS:
+            supported = ", ".join(supported_extensions())
+            raise DocumentError(
+                f"Unsupported file type {ext!r}. Supported: {supported}. "
+                f"For Apple Pages/Numbers/Keynote, export as PDF or DOCX first.",
+                status=400,
+            )
 
         ws = await self._get_workspace(workspace_id)
 
