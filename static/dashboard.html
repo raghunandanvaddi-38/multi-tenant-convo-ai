@@ -105,6 +105,7 @@ dialog::backdrop{background:rgba(0,0,0,0.5)}
       <a href="#" data-view="overview">Overview</a>
       <a href="#" data-view="chat">Try it</a>
       <a href="#" data-view="documents">Documents</a>
+      <a href="#" data-view="databases">Databases</a>
       <a href="#" data-view="prompt">Prompt</a>
       <a href="#" data-view="model">Model</a>
       <a href="#" data-view="branding">Branding</a>
@@ -438,6 +439,239 @@ views.documents = async (ws) => {
     } catch(e) { toast(e.message, 'err'); }
   };
   refresh();
+};
+
+views.databases = async (ws) => {
+  $('view').innerHTML = `
+    <div class="actions" style="justify-content:space-between;margin-bottom:14px">
+      <div><h3 style="margin:0">Databases</h3>
+        <div class="muted">Connect a PostgreSQL or MySQL database as a knowledge source. Read-only. Only tables you explicitly approve are visible to the AI.</div>
+      </div>
+      <div class="actions">
+        <button class="btn primary" id="newDbBtn">＋ New connection</button>
+      </div>
+    </div>
+    <div id="dbList" class="card">Loading…</div>
+    <div id="dbEditor"></div>
+  `;
+  $('newDbBtn').onclick = () => openDbForm(null);
+  refreshDbList();
+
+  async function refreshDbList() {
+    try {
+      const list = await api('GET', `/v1/db/connections?workspace_id=${encodeURIComponent(ws.id)}`);
+      if (!list.length) {
+        $('dbList').innerHTML = '<div class="muted">No database connections yet. Click "New connection" to add one.</div>';
+        return;
+      }
+      $('dbList').innerHTML = `<table><thead><tr>
+        <th>Name</th><th>Type</th><th>Host</th><th>Database</th>
+        <th>Status</th><th>Last refreshed</th><th></th></tr></thead>
+        <tbody>${list.map(c => `<tr>
+          <td>${escapeHtml(c.name)}</td>
+          <td><code>${c.db_type}</code></td>
+          <td class="muted">${escapeHtml(c.host)}:${c.port}</td>
+          <td class="muted">${escapeHtml(c.database_name)}</td>
+          <td><span class="pill ${c.status === 'active' ? 'ok' : c.status === 'error' ? 'err' : 'warn'}">${c.status}</span></td>
+          <td class="muted">${c.last_refreshed_at ? new Date(c.last_refreshed_at).toLocaleString() : '—'}</td>
+          <td class="actions">
+            <button class="btn sm" data-tables="${c.id}">Tables</button>
+            <button class="btn sm" data-refresh="${c.id}">Refresh</button>
+            <button class="btn sm danger" data-delete="${c.id}">Delete</button>
+          </td>
+        </tr>`).join('')}</tbody></table>`;
+      list.forEach(c => {
+        if (c.status === 'error' && c.error_message) {
+          const row = document.createElement('div');
+          row.className = 'muted';
+          row.style.cssText = 'padding:6px 8px;color:var(--danger);font-size:12px';
+          row.textContent = `Error on "${c.name}": ${c.error_message}`;
+          $('dbList').appendChild(row);
+        }
+      });
+      $('dbList').querySelectorAll('[data-tables]').forEach(b => b.onclick = () => openTables(b.dataset.tables));
+      $('dbList').querySelectorAll('[data-refresh]').forEach(b => b.onclick = () => refreshSchema(b.dataset.refresh));
+      $('dbList').querySelectorAll('[data-delete]').forEach(b => b.onclick = () => deleteConn(b.dataset.delete));
+    } catch (e) { $('dbList').textContent = e.message; }
+  }
+
+  function openDbForm(existing) {
+    const c = existing || { db_type: 'postgres', host: '', port: 5432, database_name: '', username: '', password: '', ssl_enabled: false, name: '' };
+    $('dbEditor').innerHTML = `
+      <div class="card">
+        <h2>New connection</h2>
+        <div class="muted" style="margin-bottom:10px">The credential is encrypted at rest with the platform's <code>SECRET_KEY</code>. Only used to read schema and run SELECTs against approved tables.</div>
+        <div class="row"><label>Name</label><input id="db_name" value="${escapeHtml(c.name)}" placeholder="prod-analytics"></div>
+        <div class="row"><label>Type</label>
+          <select id="db_type">
+            <option value="postgres" ${c.db_type==='postgres'?'selected':''}>PostgreSQL</option>
+            <option value="mysql" ${c.db_type==='mysql'?'selected':''}>MySQL</option>
+          </select></div>
+        <div class="row"><label>Host</label><input id="db_host" value="${escapeHtml(c.host)}" placeholder="db.example.internal"></div>
+        <div class="row"><label>Port</label><input id="db_port" type="number" value="${c.port || 5432}"></div>
+        <div class="row"><label>Database name</label><input id="db_dbname" value="${escapeHtml(c.database_name)}" placeholder="app"></div>
+        <div class="row"><label>Username</label><input id="db_user" value="${escapeHtml(c.username)}" placeholder="ai_reader" autocomplete="off"></div>
+        <div class="row"><label>Password</label><input id="db_pass" type="password" value="" placeholder="••••••••" autocomplete="new-password"></div>
+        <div class="row"><label>SSL</label><label style="display:flex;align-items:center;gap:8px;padding-top:6px">
+          <input id="db_ssl" type="checkbox" ${c.ssl_enabled?'checked':''}> Require TLS
+        </label></div>
+        <div class="actions" style="margin-top:8px">
+          <button class="btn" id="db_test">Test connection</button>
+          <button class="btn primary" id="db_save">Save + discover schema</button>
+          <button class="btn" id="db_cancel">Cancel</button>
+          <span id="db_msg" class="muted" style="margin-left:8px"></span>
+        </div>
+        <div class="muted" style="margin-top:6px;font-size:12px">Tip: for PostgreSQL the default port is 5432; MySQL is 3306. If the DB is on the same host as this platform, use <code>127.0.0.1</code> — not <code>localhost</code> on some systems.</div>
+      </div>`;
+    // sensible port default when type changes
+    $('db_type').onchange = () => { const t = $('db_type').value; $('db_port').value = t === 'mysql' ? 3306 : 5432; };
+    $('db_cancel').onclick = () => { $('dbEditor').innerHTML = ''; };
+    $('db_test').onclick = () => submitDb('test');
+    $('db_save').onclick = () => submitDb('save');
+  }
+
+  function collectDbForm() {
+    return {
+      workspace_id: ws.id,
+      name: $('db_name').value.trim(),
+      db_type: $('db_type').value,
+      host: $('db_host').value.trim(),
+      port: Number($('db_port').value),
+      database_name: $('db_dbname').value.trim(),
+      username: $('db_user').value.trim(),
+      password: $('db_pass').value,
+      ssl_enabled: $('db_ssl').checked,
+    };
+  }
+
+  async function submitDb(kind) {
+    const body = collectDbForm();
+    if (!body.name || !body.host || !body.database_name || !body.username) {
+      $('db_msg').textContent = 'Name, host, database, and user are required.';
+      $('db_msg').style.color = 'var(--danger)';
+      return;
+    }
+    const btn = kind === 'test' ? $('db_test') : $('db_save');
+    const originalText = btn.textContent;
+    btn.disabled = true; btn.textContent = kind === 'test' ? 'Testing…' : 'Saving…';
+    $('db_msg').textContent = ''; $('db_msg').style.color = 'var(--muted)';
+    try {
+      const path = kind === 'test' ? '/v1/db/connections/test' : '/v1/db/connections';
+      const res = await api('POST', path, body);
+      if (kind === 'test') {
+        if (res.ok) {
+          $('db_msg').style.color = 'var(--ok)';
+          $('db_msg').textContent = `✓ Connected — ${res.version || 'OK'}`;
+        } else {
+          $('db_msg').style.color = 'var(--danger)';
+          $('db_msg').textContent = `✗ ${res.message}`;
+        }
+      } else {
+        toast(`Saved. Discovered ${res.discovery?.total_tables ?? '?'} tables — approve the ones you want the AI to see.`, 'ok');
+        $('dbEditor').innerHTML = '';
+        await refreshDbList();
+        openTables(res.id);
+      }
+    } catch (e) {
+      $('db_msg').style.color = 'var(--danger)';
+      $('db_msg').textContent = e.message;
+    } finally {
+      btn.disabled = false; btn.textContent = originalText;
+    }
+  }
+
+  async function openTables(connId) {
+    $('dbEditor').innerHTML = `<div class="card"><h2>Tables · <code>${connId.slice(0,8)}…</code></h2>
+      <div class="muted" style="margin-bottom:10px">Toggle "Allowed" to let the AI query a table. Add descriptions to teach the AI what each table + column means — huge quality boost.</div>
+      <div id="tblList">Loading…</div></div>`;
+    try {
+      const tables = await api('GET', `/v1/db/connections/${connId}/tables`);
+      if (!tables.length) { $('tblList').textContent = 'No tables discovered.'; return; }
+      $('tblList').innerHTML = tables.map(t => tableCard(connId, t)).join('');
+      tables.forEach(t => wireTableCard(connId, t));
+    } catch (e) { $('tblList').textContent = e.message; }
+  }
+
+  function tableCard(connId, t) {
+    return `
+      <div class="card" style="border-left:3px solid ${t.allowed ? 'var(--ok)' : 'var(--border)'}">
+        <div class="actions" style="justify-content:space-between;align-items:center">
+          <div>
+            <strong>${escapeHtml(t.qualified_name)}</strong>
+            <span class="pill" style="margin-left:6px">${t.table_type}</span>
+            <span class="muted" style="margin-left:6px;font-size:12px">${t.columns.length} column(s)</span>
+          </div>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" data-tbl-allow="${t.id}" ${t.allowed ? 'checked' : ''}>
+            <span class="muted">Allowed</span>
+          </label>
+        </div>
+        <div class="row" style="margin-top:8px"><label>Description</label>
+          <textarea data-tbl-desc="${t.id}" rows="2" placeholder="What is this table? Who uses it?">${escapeHtml(t.description || '')}</textarea>
+        </div>
+        <details style="margin-top:8px">
+          <summary class="muted" style="cursor:pointer;font-size:12px">Columns (${t.columns.length})</summary>
+          <table style="margin-top:6px"><thead><tr><th>Name</th><th>Type</th><th>Flags</th><th>Description</th></tr></thead>
+            <tbody>${t.columns.map(c => `<tr>
+              <td><code>${escapeHtml(c.column_name)}</code></td>
+              <td class="muted">${escapeHtml(c.data_type)}</td>
+              <td class="muted" style="font-size:11px">${c.is_primary_key?'PK ':''}${c.is_nullable?'':'NOT NULL '}</td>
+              <td><input data-col-desc="${c.id}" value="${escapeHtml(c.description || '')}" placeholder="Describe this column"></td>
+            </tr>`).join('')}</tbody></table>
+        </details>
+        <div class="actions" style="margin-top:8px">
+          <button class="btn sm primary" data-tbl-save="${t.id}">Save</button>
+        </div>
+      </div>`;
+  }
+
+  function wireTableCard(connId, t) {
+    const btn = document.querySelector(`[data-tbl-save="${t.id}"]`);
+    if (!btn) return;
+    btn.onclick = async () => {
+      const allowed = document.querySelector(`[data-tbl-allow="${t.id}"]`).checked;
+      const description = document.querySelector(`[data-tbl-desc="${t.id}"]`).value;
+      btn.disabled = true; btn.textContent = 'Saving…';
+      try {
+        await api('PATCH', `/v1/db/connections/${connId}/tables/${t.id}`, { allowed, description });
+        // Save column descriptions in parallel
+        const colDescs = document.querySelectorAll(`[data-col-desc]`);
+        const cols = t.columns.reduce((m, c) => (m[c.id] = c.description, m), {});
+        const patches = [];
+        for (const el of colDescs) {
+          const id = el.dataset.colDesc;
+          if (!(id in cols)) continue;
+          if ((el.value || '') === (cols[id] || '')) continue;
+          patches.push(api('PATCH', `/v1/db/connections/${connId}/columns/${id}`, { description: el.value }));
+        }
+        await Promise.all(patches);
+        toast('Saved', 'ok');
+        await refreshDbList();
+        openTables(connId);
+      } catch (e) { toast(e.message, 'err'); }
+      finally { btn.disabled = false; btn.textContent = 'Save'; }
+    };
+  }
+
+  async function refreshSchema(connId) {
+    if (!confirm('Refresh schema? Existing descriptions and allow flags are preserved.')) return;
+    try {
+      const res = await api('POST', `/v1/db/connections/${connId}/refresh`);
+      const s = res.summary || {};
+      toast(`Refreshed. +${s.added_tables||0} tables, -${s.removed_tables||0} tables, ${s.changed_columns||0} column changes.`, 'ok');
+      await refreshDbList();
+    } catch (e) { toast(e.message, 'err'); }
+  }
+
+  async function deleteConn(connId) {
+    if (!confirm('Delete this connection? Schema metadata and query logs will be removed. Your database is not touched.')) return;
+    try {
+      await api('DELETE', `/v1/db/connections/${connId}`);
+      toast('Deleted', 'ok');
+      $('dbEditor').innerHTML = '';
+      await refreshDbList();
+    } catch (e) { toast(e.message, 'err'); }
+  }
 };
 
 views.prompt = async (ws) => {
