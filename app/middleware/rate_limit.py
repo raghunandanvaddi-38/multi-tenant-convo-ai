@@ -26,7 +26,7 @@ REQUESTS_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MIN", "60"))
 BURST_PER_SECOND = int(os.getenv("RATE_LIMIT_BURST", "10"))
 
 
-PROTECTED_PREFIXES = ("/v1/chat", "/v1/documents", "/v1/stt", "/v1/tts")
+PROTECTED_PREFIXES = ("/v1/chat", "/v1/documents", "/v1/stt", "/v1/tts", "/v1/db")
 
 
 def _key_from_request(request: Request) -> str | None:

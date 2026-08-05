@@ -8,6 +8,10 @@ from app.models.api_key import APIKey, APIKeyScope
 from app.models.document import Document, DocumentStatus
 from app.models.prompt_version import PromptVersion
 from app.models.event import Event, EventKind
+from app.models.db_connection import (
+    DBConnection, DBTable, DBColumn, DBRelationship, DBQueryLog,
+    DBType, ConnectionStatus,
+)
 
 __all__ = [
     "User",
@@ -18,4 +22,6 @@ __all__ = [
     "Document", "DocumentStatus",
     "PromptVersion",
     "Event", "EventKind",
+    "DBConnection", "DBTable", "DBColumn", "DBRelationship", "DBQueryLog",
+    "DBType", "ConnectionStatus",
 ]

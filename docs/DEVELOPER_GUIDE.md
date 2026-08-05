@@ -84,6 +84,8 @@ Pick whichever fits your product:
 | **WebSocket (text)** | `WS /v1/ws/chat` | Full-duplex text apps, mobile, apps that also need push from server |
 | **WebSocket (voice)** | `WS /v1/ws/voice` | Real-time voice conversations — streaming STT, streaming TTS, raw PCM |
 | **REST voice one-shot** | `POST /v1/stt`, `POST /v1/tts` | Batch transcription, voice generation for TTS-only or STT-only flows |
+| **Ask-your-database** | `POST /v1/db/ask` | Natural-language question → SQL (LLM) → validated + executed → NL answer |
+| **Direct SQL** | `POST /v1/db/query` | Client-generated SELECT, still validated (SELECT-only, allowlisted tables) |
 
 ### 3.1 REST — the simplest thing that could possibly work
 
@@ -506,7 +508,190 @@ curl -X DELETE https://<host>/v1/documents/{id} -H "x-api-key: sk_..."
 
 ---
 
-## 7. Prompt engineering
+## 7. Databases as a knowledge source
+
+Documents cover static knowledge. For anything that lives in a customer's own
+database — orders, tickets, inventory, telemetry — the platform ships a
+**Database Connector** that lets a workspace connect a relational database
+(PostgreSQL or MySQL today; SQL Server / Oracle designed-in) and answer
+questions from it using the same LLM stack.
+
+The connector is deliberately **read-only, allowlisted, and audited** — it
+never lets the LLM execute arbitrary SQL against your production DB.
+
+### 7.1 Model
+
+```
+Workspace
+  └── DBConnection             one row per DB the workspace can query
+        ├── host / port / db / user (credentials Fernet-encrypted at rest)
+        ├── status              pending | active | error
+        ├── DBTable[]           discovered tables (allowed=true/false, description)
+        │     └── DBColumn[]    discovered columns (description)
+        └── DBRelationship[]    discovered foreign keys
+```
+
+Only **workspace admins** can create, delete, or refresh connections, or
+change which tables are allowed. Every executed SQL statement lands in
+`db_query_logs` with timing, row count, and error text — never the credential.
+
+### 7.2 The query pipeline
+
+```
+User question
+    │
+    ▼
+LLM (plan pass)             sees only allowed tables + descriptions
+    │                       produces { "sql": "SELECT …", "cannot_answer": bool }
+    ▼
+SQLValidator                SELECT-only, single stmt, allowlist, LIMIT injection
+    │
+    ▼
+Database Connector          Postgres | MySQL (SQLAlchemy async + pool)
+    │                       driver-side: read-only txn + statement_timeout
+    ▼
+Rows (max 500 by default)
+    │
+    ▼
+LLM (answer pass)           sees the rows + the question, writes NL answer
+    │
+    ▼
+Response  { answer, sql, columns, rows, execution_time_ms }
+```
+
+### 7.3 Admin surface — creating a connection
+
+All routes JWT-authed via `Authorization: Bearer <access-token>`.
+
+```bash
+# 1. Dry-run: test creds before saving
+curl -X POST https://<host>/v1/db/connections/test \
+  -H "Authorization: Bearer <jwt>" -H "content-type: application/json" \
+  -d '{
+        "workspace_id": "wksp_...",
+        "name": "prod-analytics",
+        "db_type": "postgres",
+        "host": "10.0.0.7", "port": 5432,
+        "database_name": "app",
+        "username": "ai_reader",
+        "password": "…",
+        "ssl_enabled": true
+      }'
+# → { "ok": true, "version": "PostgreSQL 15.4" }
+#   or { "ok": false, "message": "Authentication failed — check username or password." }
+
+# 2. Create — tests first, saves + auto-runs schema discovery
+curl -X POST https://<host>/v1/db/connections -H "Authorization: Bearer <jwt>" -d '<same body>'
+
+# 3. Approve the tables the AI is allowed to see (default: none)
+curl -X PATCH https://<host>/v1/db/connections/{conn_id}/tables/{table_id} \
+  -H "Authorization: Bearer <jwt>" -H "content-type: application/json" \
+  -d '{"allowed": true, "description": "Customer purchase history"}'
+
+# 4. Describe a column for the LLM
+curl -X PATCH https://<host>/v1/db/connections/{conn_id}/columns/{column_id} \
+  -H "Authorization: Bearer <jwt>" -H "content-type: application/json" \
+  -d '{"description": "Order state; Pending | Paid | Delivered | Cancelled"}'
+
+# 5. Refresh schema after an upstream migration (preserves your allowed + descriptions)
+curl -X POST https://<host>/v1/db/connections/{conn_id}/refresh -H "Authorization: Bearer <jwt>"
+```
+
+### 7.4 App surface — asking your database
+
+Both routes API-key-authed (`x-api-key: sk_…`).
+
+```bash
+# Natural language — LLM plans, validator gates, LLM answers
+curl -X POST https://<host>/v1/db/ask \
+  -H "x-api-key: sk_..." -H "content-type: application/json" \
+  -d '{"question": "How many orders were placed last week?"}'
+```
+```json
+{
+  "answer": "There were 128 orders placed last week.",
+  "sql": "SELECT COUNT(*) FROM orders WHERE created_at >= NOW() - INTERVAL '7 days' LIMIT 500",
+  "columns": ["count"],
+  "rows": [[128]],
+  "row_count": 1,
+  "execution_time_ms": 41,
+  "connection_id": "conn_..."
+}
+```
+
+```bash
+# Client-generated SELECT — still validated + logged
+curl -X POST https://<host>/v1/db/query \
+  -H "x-api-key: sk_..." -H "content-type: application/json" \
+  -d '{"connection_id": "conn_...", "sql": "SELECT id, total FROM orders WHERE status='"'"'paid'"'"' LIMIT 20"}'
+```
+
+### 7.5 What the validator blocks
+
+Anything that is not a single, read-only `SELECT`:
+
+| Rejected | Reason |
+|---|---|
+| `INSERT / UPDATE / DELETE / REPLACE / MERGE / UPSERT` | Not read-only |
+| `DROP / ALTER / CREATE / TRUNCATE / RENAME` | DDL |
+| `GRANT / REVOKE` | Permissions |
+| `EXEC / EXECUTE / CALL` | Stored procs may write |
+| `LOCK / UNLOCK / SET / USE / ATTACH / COPY / ANALYZE / VACUUM` | Non-query DDL/DCL |
+| `BEGIN / COMMIT / ROLLBACK / SAVEPOINT` | Transaction control |
+| `SELECT ... INTO` | Writes rows to a new table |
+| Multiple statements (`;` in the middle) | Only one statement per request |
+| Any table not on the workspace allowlist | Ensures hidden tables stay hidden |
+| SQL > 10,000 chars | Defensive cap against dumps |
+
+**Auto-injected on every accepted SELECT:**
+- `LIMIT 500` (configurable per-request via `max_rows`)
+- Postgres: `SET LOCAL statement_timeout` + `transaction_read_only = on`
+- MySQL: `SET SESSION TRANSACTION READ ONLY` + `MAX_EXECUTION_TIME` hint
+
+### 7.6 Getting good answers over your database
+
+- **Approve narrowly.** Only turn on tables the AI actually needs. Every
+  extra table is prompt tokens and one more chance the LLM writes a wrong
+  join.
+- **Describe tables + columns.** The description text goes straight into the
+  planning prompt. A three-word column description ("`status`: pending, paid,
+  delivered, cancelled") dramatically improves query quality.
+- **Prefer views for computed aggregates** the LLM would otherwise have to
+  reconstruct. Create a `customer_ltv` view once; approve it; watch the
+  planner just SELECT from it.
+- **Refresh after migrations.** `POST /connections/{id}/refresh` keeps
+  discovered metadata in sync without losing your descriptions or allow flags.
+
+### 7.7 Adding a new database driver (SQL Server, Oracle, MongoDB, …)
+
+Every driver implements the same tiny protocol:
+
+```python
+class DatabaseConnector(Protocol):
+    name: str
+    async def test(self, spec: ConnectionSpec) -> ConnectionTestResult: ...
+    async def discover(self, spec: ConnectionSpec) -> DiscoveredSchema: ...
+    async def execute_read(self, spec, sql, params, *, max_rows, timeout_s) -> QueryResult: ...
+    async def close_pool(self, spec_key: str) -> None: ...
+```
+
+Recipe:
+
+1. Add `app/db_connectors/<name>_connector.py` implementing the protocol.
+2. Add `<name>` to `DBType` enum in `app/models/db_connection.py`.
+3. Register in `app/db_connectors/registry.py::_bootstrap()`:
+   ```python
+   register_connector("sqlserver", SqlServerConnector())
+   ```
+
+No routes, no service, no validator changes needed. Non-SQL sources
+(MongoDB, REST APIs, Salesforce, SharePoint) fit the same interface —
+they just implement `execute_read()` in their own dialect (a JSON path
+DSL, a query object, whatever). The validator only runs on SQL sources.
+
+---
+
+## 8. Prompt engineering
 
 The prompt template is a plain Python format string with three placeholders:
 
@@ -548,7 +733,7 @@ Use the **Try it** tab — it's a live chat driven by a `chat`-scope key you pas
 
 ---
 
-## 8. Multi-workspace design patterns
+## 9. Multi-workspace design patterns
 
 You have several ways to model your customers on the platform:
 
@@ -568,9 +753,9 @@ If you leave it out, the server mints a fresh id on every call — good for stat
 
 ---
 
-## 9. Auth & security
+## 10. Auth & security
 
-### 9.1 API key scopes
+### 10.1 API key scopes
 
 | Scope | Grants |
 |---|---|
@@ -580,7 +765,7 @@ If you leave it out, the server mints a fresh id on every call — good for stat
 
 An `admin` key implies both other scopes.
 
-### 9.2 Two auth flavors
+### 10.2 Two auth flavors
 
 Users authenticate one way; server-to-server another:
 
@@ -591,7 +776,7 @@ Users authenticate one way; server-to-server another:
 
 **Never** put a JWT in a browser widget or an API key in a public git repo.
 
-### 9.3 Key rotation
+### 10.3 Key rotation
 
 Two-step rotation with zero downtime:
 
@@ -602,7 +787,7 @@ Two-step rotation with zero downtime:
 
 Traffic on a revoked key immediately gets `401`.
 
-### 9.4 Rate limits
+### 10.4 Rate limits
 
 Per-API-key defaults:
 
@@ -613,7 +798,7 @@ Per-API-key defaults:
 
 ---
 
-## 10. Error handling
+## 11. Error handling
 
 Every non-2xx response has this shape:
 
@@ -643,7 +828,7 @@ Every response carries an `x-request-id` header — quote it in support tickets.
 
 ---
 
-## 11. Analytics
+## 12. Analytics
 
 Every message writes an `Event` row (workspace_id, model, conversation_id, tokens_out, latency_ms, query_text truncated to 500 chars).
 
@@ -674,7 +859,7 @@ Use this to figure out:
 
 ---
 
-## 12. Production checklist
+## 13. Production checklist
 
 Before pointing real customers at your build:
 
@@ -693,9 +878,9 @@ Before pointing real customers at your build:
 
 ---
 
-## 13. Extending the platform
+## 14. Extending the platform
 
-### 13.1 Adding a new LLM provider (e.g. Gemini)
+### 14.1 Adding a new LLM provider (e.g. Gemini)
 
 1. Create `app/providers/gemini_provider.py` implementing the `LLMProvider` protocol:
 
@@ -716,7 +901,7 @@ self._factories["gemini"] = _build_gemini
 
 3. Workspaces set `settings.llm.provider = "gemini"` in the dashboard. That's it — no other code changes.
 
-### 13.2 Adding a new document format
+### 14.2 Adding a new document format
 
 Add an extractor to `app/documents/extractors.py`:
 
@@ -727,7 +912,7 @@ EXTRACTORS[".epub"] = extract_epub
 
 The ingestion pipeline and dashboard `accept=` filter both read from `EXTRACTORS` — no other changes.
 
-### 13.3 Adding a new storage backend (S3, GCS)
+### 14.3 Adding a new storage backend (S3, GCS)
 
 Implement the protocol in `app/storage/base.py`:
 
@@ -741,9 +926,13 @@ class S3Backend:
 
 Register in `app/storage/factory.py` under a new `STORAGE_BACKEND=s3` branch. Existing routes and services are storage-agnostic.
 
+### 14.4 Adding a new database connector (SQL Server, Oracle, MongoDB, …)
+
+See §7.7 above — same three-step recipe. Nothing outside `app/db_connectors/` needs to change.
+
 ---
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
@@ -754,10 +943,15 @@ Register in `app/storage/factory.py` under a new `STORAGE_BACKEND=s3` branch. Ex
 | Widget shows default colors | Branding hasn't been saved OR `/v1/workspace` returned an error | Open browser devtools → Network → look at `GET /v1/workspace` |
 | 401 on every call the moment I start the server | `SECRET_KEY` changed since JWTs were issued; all old tokens are invalid | Sign out + sign back in |
 | Rate limits triggering constantly in dev | Default 10/sec is tight | `export RATE_LIMIT_BURST=100 RATE_LIMIT_PER_MIN=6000` |
+| `/v1/db/query` returns 400 "Query references disallowed table(s): …" | Table not in the workspace allowlist | Approve it in the dashboard or via `PATCH /v1/db/connections/{id}/tables/{tid}` |
+| `/v1/db/ask` returns 409 "No active database connection with approved tables" | Workspace has no active DB or no approved tables | Create a connection AND approve at least one table |
+| `POST /v1/db/connections` 400 "Authentication failed" | Wrong DB credentials — connector never saves invalid ones | Fix creds and retry; nothing is persisted |
+| Connection stuck in `status=error` after upstream restart | The pooled engine still points at a dead endpoint | `POST /v1/db/connections/{id}/refresh` invalidates the pool and retries |
+| `db_query_logs` growing unbounded | Every executed SQL is audited | Rotate/prune the table on your platform DB per your retention policy |
 
 ---
 
-## 15. What's on the roadmap (not shipped yet)
+## 16. What's on the roadmap (not shipped yet)
 
 Fair to name what isn't here:
 
@@ -765,6 +959,11 @@ Fair to name what isn't here:
 - **Function calling.** The LLM can only generate text. No structured tool use yet.
 - **Real WebRTC transport.** Voice uses WebSocket + raw-PCM binary frames — matches WebRTC latency on same-region networks but not on lossy mobile links. Adding an `aiortc`-based `POST /v1/rtc/offer` peer-connection endpoint is planned; the SDK surface (`voiceSocket`) is intentionally shaped so it can fall back to WebRTC transparently.
 - **AudioWorklet capture.** The widget mic path currently uses `ScriptProcessorNode` (deprecated but universally supported). Migrating to `AudioWorkletNode` will reduce input jitter further.
+- **More database drivers.** PostgreSQL and MySQL ship today; SQL Server and Oracle slot into the same `DatabaseConnector` protocol (see §7.7). Non-relational sources (MongoDB, Salesforce, SharePoint, Google Drive, Confluence) will follow the same interface with dialect-specific `execute_read()` implementations — the validator only runs on SQL sources.
+- **DB in chat.** Today `/v1/db/ask` is a dedicated endpoint. The next step is to route `/v1/chat` requests to the DB pipeline automatically when the workspace has an active connection and the question looks structured (dates, aggregations, entity IDs).
+- **Scheduled schema refresh.** `POST /connections/{id}/refresh` runs on demand; a cron-driven daily refresh is planned.
+- **DB-side row-level security.** The platform enforces workspace + table isolation. If you need per-end-user data filtering (customer A sees only their orders), it must currently be encoded via workspace-per-customer or filtered views. A first-class `row_filter` per API key is on the roadmap.
+- **SDK bindings for databases.** `client.askDatabase(question)` and `client.queryDatabase(sql)` are one small SDK release away — planned for the next `@platform/sdk` bump.
 - **Mobile SDKs.** iOS/Android/Flutter/React Native are REST-driven — treat the wire contract in this doc as the mobile SDK. Native wrappers are on the roadmap.
 - **Multi-region.** Storage backend is pluggable, but the DB and Redis are single-region for now.
 - **Fine-grained RBAC.** Membership roles are `owner / admin / member` at the org level. Per-workspace roles are not yet a thing.

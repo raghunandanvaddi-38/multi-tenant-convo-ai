@@ -100,7 +100,8 @@ async def init_db() -> None:
     """Create tables + seed the default org/workspace on first boot."""
     # Import all model modules so their tables are registered on Base.metadata.
     from app.models import (  # noqa: F401
-        user, organization, workspace, membership, api_key, document, prompt_version, event
+        user, organization, workspace, membership, api_key, document, prompt_version, event,
+        db_connection,
     )
 
     async with engine.begin() as conn:
